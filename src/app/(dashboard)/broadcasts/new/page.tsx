@@ -43,6 +43,7 @@ export default function NewBroadcastPage() {
   >({});
   const [headerMediaUrl, setHeaderMediaUrl] = useState('');
   const [name, setName] = useState('');
+  const [assignedAgentId, setAssignedAgentId] = useState<string | null>(null);
 
   async function handleSend() {
     if (!template) return;
@@ -60,6 +61,7 @@ export default function NewBroadcastPage() {
         },
         variables,
         headerMediaUrl,
+        assignedAgentId,
       });
       router.push(`/broadcasts/${broadcastId}`);
     } catch (err) {
@@ -111,6 +113,7 @@ export default function NewBroadcastPage() {
         tagIds: audience.tagIds,
       },
       status: 'draft',
+      assigned_agent_id: assignedAgentId || null,
       total_recipients: 0,
       sent_count: 0,
       delivered_count: 0,
@@ -224,6 +227,8 @@ export default function NewBroadcastPage() {
               onBack={() => setCurrentStep(2)}
               isProcessing={isProcessing}
               progress={progress}
+              assignedAgentId={assignedAgentId}
+              onAssignedAgentChange={setAssignedAgentId}
             />
           )}
         </div>

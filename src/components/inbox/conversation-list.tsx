@@ -9,7 +9,7 @@ import {
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
-import { Search, ChevronDown, X } from "lucide-react";
+import { Search, ChevronDown, X, UserCircle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Input } from "@/components/ui/input";
 import {
@@ -33,6 +33,8 @@ interface ConversationListProps {
    * or the tab was throttled. Optional so existing callers keep working.
    */
   resyncToken?: number;
+  currentUserId?: string | null;
+  accountRole?: string | null;
 }
 
 const STATUS_COLORS: Record<ConversationStatus, string> = {
@@ -51,16 +53,25 @@ const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = [
   { label: "Closed", value: "closed" },
 ];
 
+type AssignmentFilter = 'all_chats' | 'my_chats' | 'unassigned';
+
 export function ConversationList({
   activeConversationId,
   onSelect,
   conversations,
   onConversationsLoaded,
   resyncToken = 0,
+  currentUserId,
+  accountRole,
 }: ConversationListProps) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [loading, setLoading] = useState(true);
+  
+  const isAgentRole = accountRole === 'agent' || accountRole === 'viewer';
+  const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>(
+    isAgentRole ? 'my_chats' : 'all_chats'
+  );
   // Contact-based filters (issue #272). Tags use OR logic (a conversation
   // matches if its contact carries any selected tag), consistent with
   // Broadcast audience filtering. Company is an exact match on the field.
@@ -156,6 +167,12 @@ export function ConversationList({
   const filtered = useMemo(() => {
     let result = conversations;
 
+    if (assignmentFilter === 'my_chats' && currentUserId) {
+      result = result.filter((c) => c.assigned_agent_id === currentUserId);
+    } else if (assignmentFilter === 'unassigned') {
+      result = result.filter((c) => !c.assigned_agent_id);
+    }
+
     if (filter === "unread") {
       result = result.filter((c) => c.unread_count > 0);
     } else if (filter !== "all") {
@@ -183,7 +200,7 @@ export function ConversationList({
     }
 
     return result;
-  }, [conversations, filter, search, selectedTagIds, selectedCompany]);
+  }, [conversations, assignmentFilter, currentUserId, filter, search, selectedTagIds, selectedCompany]);
 
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
@@ -221,6 +238,28 @@ export function ConversationList({
     <div className="flex h-full w-full flex-col border-r border-border bg-card lg:w-80">
       {/* Search + Filter */}
       <div className="space-y-2 border-b border-border p-3">
+        {/* Assignment filter tabs */}
+        <div className="flex rounded-lg bg-muted p-0.5 mb-2">
+          {[
+            { label: 'All Chats', value: 'all_chats' as AssignmentFilter },
+            { label: 'My Chats', value: 'my_chats' as AssignmentFilter },
+            { label: 'Unassigned', value: 'unassigned' as AssignmentFilter },
+          ].map((tab) => (
+            <button
+              key={tab.value}
+              onClick={() => setAssignmentFilter(tab.value)}
+              className={cn(
+                'flex-1 rounded-md px-2 py-1 text-xs font-medium transition-all',
+                assignmentFilter === tab.value
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input

@@ -445,7 +445,7 @@ async function handleStatusUpdate(status: {
  * Runs on a best-effort basis — failures here must not break the
  * main inbound-message flow, so errors are swallowed with a log.
  */
-async function flagBroadcastReplyIfAny(accountId: string, contactId: string) {
+async function flagBroadcastReplyIfAny(accountId: string, contactId: string, conversationId: string) {
   try {
     // Most recent outbound broadcast in this account that hasn't
     // been replied to yet. Account-scoped so a shared inbox reply
@@ -453,7 +453,7 @@ async function flagBroadcastReplyIfAny(accountId: string, contactId: string) {
     // sent it.
     const { data: recs, error } = await supabaseAdmin()
       .from('broadcast_recipients')
-      .select('id, status, broadcast_id, broadcasts!inner(account_id)')
+      .select('id, status, broadcast_id, broadcasts!inner(account_id, assigned_agent_id)')
       .eq('contact_id', contactId)
       .eq('broadcasts.account_id', accountId)
       .in('status', ['sent', 'delivered', 'read'])
@@ -470,6 +470,20 @@ async function flagBroadcastReplyIfAny(accountId: string, contactId: string) {
 
     if (updErr) {
       console.error('Error marking broadcast recipient replied:', updErr)
+    }
+
+    // Auto-assign the conversation to the broadcast's designated agent
+    // if one was set when the broadcast was created.
+    const broadcast = row.broadcasts as unknown as { account_id: string; assigned_agent_id?: string }
+    if (broadcast?.assigned_agent_id && conversationId) {
+      const { error: assignErr } = await supabaseAdmin()
+        .from('conversations')
+        .update({ assigned_agent_id: broadcast.assigned_agent_id })
+        .eq('id', conversationId)
+
+      if (assignErr) {
+        console.error('Error auto-assigning conversation from broadcast:', assignErr)
+      }
     }
   } catch (err) {
     console.error('flagBroadcastReplyIfAny failed:', err)
@@ -705,7 +719,7 @@ async function processMessage(
   // If this contact was a recent broadcast recipient, flag the reply
   // so the broadcast's `replied_count` advances (via the aggregate
   // trigger installed in migration 003).
-  await flagBroadcastReplyIfAny(accountId, contactRecord.id)
+  await flagBroadcastReplyIfAny(accountId, contactRecord.id, conversation.id)
 
   // ============================================================
   // Flow runner dispatch.

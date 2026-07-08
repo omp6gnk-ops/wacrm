@@ -46,6 +46,7 @@ interface BroadcastPayload {
    * falls back to the template's stored URL only when this is empty.
    */
   headerMediaUrl?: string;
+  assignedAgentId?: string | null;
 }
 
 interface UseBroadcastSendingReturn {
@@ -370,6 +371,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           },
           status: 'sending',
           total_recipients: contacts.length,
+          assigned_agent_id: payload.assignedAgentId || null,
           sent_count: 0,
           delivered_count: 0,
           read_count: 0,

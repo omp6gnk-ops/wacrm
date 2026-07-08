@@ -14,12 +14,24 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { ArrowLeft, Send, Loader2, Users, Save } from 'lucide-react';
+import { ArrowLeft, Send, Loader2, Users, Save, UserCircle, ChevronDown } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 interface AudienceConfig {
   type: string;
   tagIds?: string[];
   csvContacts?: { phone: string; name?: string }[];
+}
+
+interface TeamMember {
+  user_id: string;
+  full_name: string | null;
+  avatar_url: string | null;
 }
 
 interface Step4Props {
@@ -32,6 +44,8 @@ interface Step4Props {
   onBack: () => void;
   isProcessing: boolean;
   progress: number;
+  assignedAgentId: string | null;
+  onAssignedAgentChange: (agentId: string | null) => void;
 }
 
 export function Step4ScheduleSend({
@@ -44,10 +58,27 @@ export function Step4ScheduleSend({
   onBack,
   isProcessing,
   progress,
+  assignedAgentId,
+  onAssignedAgentChange,
 }: Step4Props) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [estimatedReach, setEstimatedReach] = useState<number>(0);
   const [loadingReach, setLoadingReach] = useState(true);
+  const [members, setMembers] = useState<TeamMember[]>([]);
+
+  // Load team members for the assignment dropdown
+  useEffect(() => {
+    const supabase = createClient();
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('profiles')
+        .select('user_id, full_name, avatar_url')
+        .order('full_name');
+      if (!cancelled && data) setMembers(data as TeamMember[]);
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     async function calculateReach() {
@@ -139,6 +170,52 @@ export function Step4ScheduleSend({
             <p className="text-xs text-muted-foreground">Language</p>
             <p className="text-foreground">{template.language ?? 'en_US'}</p>
           </div>
+        </div>
+
+        {/* Agent Assignment */}
+        <div className="border-t border-border pt-3 mt-3">
+          <p className="text-xs text-muted-foreground mb-1.5">Assign Replies To</p>
+          <DropdownMenu>
+            <DropdownMenuTrigger className="inline-flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-sm text-foreground hover:bg-muted/80 w-full">
+              <UserCircle className="h-4 w-4 text-muted-foreground" />
+              <span className="flex-1 text-left truncate">
+                {assignedAgentId
+                  ? members.find((m) => m.user_id === assignedAgentId)?.full_name ?? 'Selected Agent'
+                  : 'No Assignment (Admin sees all)'}
+              </span>
+              <ChevronDown className="h-3 w-3 text-muted-foreground" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-64 border-border bg-popover">
+              <DropdownMenuItem
+                onClick={() => onAssignedAgentChange(null)}
+                className="text-sm text-popover-foreground"
+              >
+                <span className="flex items-center gap-2">
+                  <Users className="h-4 w-4 text-muted-foreground" />
+                  No Assignment
+                </span>
+              </DropdownMenuItem>
+              {members.map((m) => (
+                <DropdownMenuItem
+                  key={m.user_id}
+                  onClick={() => onAssignedAgentChange(m.user_id)}
+                  className="text-sm text-popover-foreground"
+                >
+                  <span className="flex items-center gap-2">
+                    {m.avatar_url ? (
+                      <img src={m.avatar_url} alt="" className="h-5 w-5 rounded-full object-cover" />
+                    ) : (
+                      <UserCircle className="h-5 w-5 text-muted-foreground" />
+                    )}
+                    <span className="truncate">{m.full_name || 'Unnamed Member'}</span>
+                  </span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <p className="text-[11px] text-muted-foreground mt-1">
+            Replies from this broadcast will be auto-assigned to the selected agent.
+          </p>
         </div>
       </div>
 

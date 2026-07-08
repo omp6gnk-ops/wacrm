@@ -361,6 +361,7 @@ export interface Broadcast {
   read_count: number;
   replied_count: number;
   failed_count: number;
+  assigned_agent_id?: string;
   created_at: string;
 }
 
