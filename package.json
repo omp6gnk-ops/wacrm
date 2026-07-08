@@ -1,8 +1,8 @@
 {
-  "name": "wacrm",
+  "name": "gnk-edusolution-crm",
   "version": "0.7.0",
   "private": true,
-  "description": "Self-hostable CRM template for WhatsApp built on Next.js and Supabase — shared inbox, contacts, sales pipelines, broadcasts, and no-code automations.",
+  "description": "WhatsApp CRM for GNK Edusolution.",
   "license": "MIT",
   "author": "Arnas Donauskas",
   "homepage": "https://github.com/ArnasDon/wacrm",
