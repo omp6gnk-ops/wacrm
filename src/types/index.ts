@@ -47,6 +47,7 @@ export interface Account {
   name: string;
   /** auth.users.id of the immutable owner. */
   owner_user_id: string;
+  wallet_balance?: number;
   created_at: string;
   updated_at: string;
 }
@@ -156,6 +157,7 @@ export interface Conversation {
   last_message_text?: string;
   last_message_at?: string;
   unread_count: number;
+  custom_status_id?: string;
   created_at: string;
   updated_at: string;
   contact?: Contact;
@@ -249,6 +251,7 @@ export interface WhatsAppConfig {
   subscribed_apps_at?: string;
   /** Last error from /register; cleared on success. */
   last_registration_error?: string;
+  utility_only_safeguard?: boolean;
 }
 
 // Raw Meta status enum. We persist this verbatim from Meta (sync + webhook)

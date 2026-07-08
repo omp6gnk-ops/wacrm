@@ -9,6 +9,8 @@ import {
   Tags,
   User,
   UsersRound,
+  Wallet,
+  MessageSquare,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -30,6 +32,8 @@ export const SETTINGS_SECTIONS = [
   'fields',
   'deals',
   'members',
+  'wallet',
+  'canned',
   'api',
 ] as const;
 
@@ -55,6 +59,8 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   fields: { id: 'fields', label: 'Fields & tags', icon: Tags, group: 'workspace' },
   deals: { id: 'deals', label: 'Deals & currency', icon: Coins, group: 'workspace' },
   members: { id: 'members', label: 'Team members', icon: UsersRound, group: 'workspace' },
+  wallet: { id: 'wallet', label: 'Wallet', icon: Wallet, group: 'workspace' },
+  canned: { id: 'canned', label: 'Quick replies', icon: MessageSquare, group: 'workspace' },
   api: { id: 'api', label: 'API keys', icon: KeyRound, group: 'workspace' },
 };
 

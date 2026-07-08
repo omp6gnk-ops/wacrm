@@ -523,6 +523,18 @@ export default function InboxPage() {
     [activeConversation]
   );
 
+  const handleCustomStatusChange = useCallback(
+    (conversationId: string, customStatusId: string | null) => {
+      setConversations((prev) =>
+        prev.map((c) => (c.id === conversationId ? { ...c, custom_status_id: customStatusId ?? undefined } : c))
+      );
+      if (activeConversation?.id === conversationId) {
+        setActiveConversation((prev) => (prev ? { ...prev, custom_status_id: customStatusId ?? undefined } : prev));
+      }
+    },
+    [activeConversation]
+  );
+
   const handleAssignChange = useCallback(
     (conversationId: string, assignedAgentId: string | null) => {
       setConversations((prev) =>
@@ -608,6 +620,7 @@ export default function InboxPage() {
             onNewMessage={handleNewMessage}
             onUpdateMessage={handleUpdateMessage}
             onStatusChange={handleStatusChange}
+            onCustomStatusChange={handleCustomStatusChange}
             onAssignChange={handleAssignChange}
             onBack={handleCloseConversation}
             resyncToken={resyncToken}

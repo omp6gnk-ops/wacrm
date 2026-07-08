@@ -185,7 +185,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { phone_number_id, waba_id, access_token, verify_token, pin } = body
+    const { phone_number_id, waba_id, access_token, verify_token, pin, utility_only_safeguard } = body
 
     if (!access_token || !phone_number_id) {
       return NextResponse.json(
@@ -363,6 +363,7 @@ export async function POST(request: Request) {
       registered_at: registrationError ? null : registeredAt,
       subscribed_apps_at: subscribedAppsAt ?? null,
       last_registration_error: registrationError,
+      utility_only_safeguard: utility_only_safeguard !== undefined ? utility_only_safeguard : true,
       updated_at: new Date().toISOString(),
     }
 

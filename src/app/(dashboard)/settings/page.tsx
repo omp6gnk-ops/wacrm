@@ -15,6 +15,8 @@ import { TemplateManager } from '@/components/settings/template-manager';
 import { FieldsAndTagsPanel } from '@/components/settings/fields-and-tags-panel';
 import { DealsSettings } from '@/components/settings/deals-settings';
 import { MembersTab } from '@/components/settings/members-tab';
+import { WalletPanel } from '@/components/settings/wallet-panel';
+import { CannedPanel } from '@/components/settings/canned-panel';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import {
   resolveSection,
@@ -67,6 +69,8 @@ export default function SettingsPage() {
     fields: <FieldsAndTagsPanel />,
     deals: <DealsSettings />,
     members: <MembersTab />,
+    wallet: <WalletPanel />,
+    canned: <CannedPanel />,
     api: <ApiKeysSettings />,
   };
 

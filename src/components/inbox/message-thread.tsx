@@ -70,6 +70,7 @@ interface MessageThreadProps {
   onNewMessage: (message: Message) => void;
   onUpdateMessage: (id: string, updates: Partial<Message>) => void;
   onStatusChange: (conversationId: string, status: ConversationStatus) => void;
+  onCustomStatusChange?: (conversationId: string, customStatusId: string | null) => void;
   onAssignChange: (
     conversationId: string,
     assignedAgentId: string | null,
@@ -158,6 +159,7 @@ export function MessageThread({
   onNewMessage,
   onUpdateMessage,
   onStatusChange,
+  onCustomStatusChange,
   onAssignChange,
   onBack,
   resyncToken = 0,
@@ -165,7 +167,22 @@ export function MessageThread({
   contactPanelOpen,
   onToggleContactPanel,
 }: MessageThreadProps) {
-  const { user } = useAuth();
+  const { user, accountId } = useAuth();
+  const [customStatuses, setCustomStatuses] = useState<{ id: string; name: string; color: string }[]>([]);
+
+  useEffect(() => {
+    if (!accountId) return;
+    const loadCustomStatuses = async () => {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('conversation_custom_statuses')
+        .select('id, name, color')
+        .eq('account_id', accountId)
+        .order('name');
+      setCustomStatuses(data ?? []);
+    };
+    loadCustomStatuses();
+  }, [accountId]);
   const { getPresence, getRow, now } = usePresence();
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -576,6 +593,28 @@ export function MessageThread({
     [conversation, onStatusChange]
   );
 
+  const handleCustomStatusChange = useCallback(
+    async (customStatusId: string | null) => {
+      if (!conversation) return;
+
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("conversations")
+        .update({ custom_status_id: customStatusId })
+        .eq("id", conversation.id);
+
+      if (error) {
+        toast.error("Failed to update lead status");
+        return;
+      }
+
+      if (onCustomStatusChange) {
+        onCustomStatusChange(conversation.id, customStatusId);
+      }
+    },
+    [conversation, onCustomStatusChange]
+  );
+
   const handleOpenTemplates = useCallback(() => {
     setTemplateModalOpen(true);
   }, []);
@@ -802,6 +841,9 @@ export function MessageThread({
   const currentStatus = STATUS_OPTIONS.find(
     (s) => s.value === conversation.status
   );
+  const activeCustomStatus = customStatuses.find(
+    (s) => s.id === conversation.custom_status_id
+  );
   const assignedAgentId = conversation.assigned_agent_id ?? null;
   const currentAssignee = profiles.find((p) => p.user_id === assignedAgentId);
   const assignLabel = assignedAgentId
@@ -904,6 +946,44 @@ export function MessageThread({
               />
             </button>
           )}
+
+           {/* Custom Lead Status dropdown */}
+          <DropdownMenu>
+            <DropdownMenuTrigger className="inline-flex items-center justify-center h-7 gap-1.5 px-2.5 text-xs font-semibold rounded-md border border-border bg-muted/40 hover:bg-muted transition-colors">
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{ backgroundColor: activeCustomStatus?.color ?? "#9ca3af" }}
+              />
+              <span className="text-foreground">
+                {activeCustomStatus?.name ?? "Lead Status"}
+              </span>
+              <ChevronDown className="h-3 w-3 text-muted-foreground" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="border-border bg-popover"
+            >
+              <DropdownMenuItem
+                onClick={() => handleCustomStatusChange(null)}
+                className="text-sm text-muted-foreground"
+              >
+                Clear Status
+              </DropdownMenuItem>
+              {customStatuses.map((opt) => (
+                <DropdownMenuItem
+                  key={opt.id}
+                  onClick={() => handleCustomStatusChange(opt.id)}
+                  className="text-sm flex items-center gap-2"
+                >
+                  <span
+                    className="h-2 w-2 rounded-full"
+                    style={{ backgroundColor: opt.color }}
+                  />
+                  {opt.name}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           {/* Status dropdown */}
           <DropdownMenu>

@@ -29,6 +29,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useCan } from "@/hooks/use-can";
+import { useAuth } from "@/hooks/use-auth";
+import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
@@ -126,6 +128,26 @@ export function MessageComposer({
   const [drafting, setDrafting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const { accountId } = useAuth();
+  const [cannedReplies, setCannedReplies] = useState<{ id: string; shortcut: string; message_text: string }[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestions, setSuggestions] = useState<{ id: string; shortcut: string; message_text: string }[]>([]);
+  const [suggestionIndex, setSuggestionIndex] = useState(0);
+
+  useEffect(() => {
+    if (!accountId) return;
+    const loadCanned = async () => {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('canned_responses')
+        .select('id, shortcut, message_text')
+        .eq('account_id', accountId)
+        .order('shortcut');
+      setCannedReplies(data ?? []);
+    };
+    loadCanned();
+  }, [accountId]);
+
   // Media attachment state. `draft` holds an uploaded-but-not-yet-sent
   // attachment; `busy` covers the upload/transcode window.
   const [draft, setDraft] = useState<MediaDraft | null>(null);
@@ -207,22 +229,92 @@ export function MessageComposer({
     }
   }, [text, sending, sessionExpired, onSend, replyTo?.id]);
 
+  const applyCannedReply = useCallback((reply: { shortcut: string; message_text: string }) => {
+    if (!textareaRef.current) return;
+    const el = textareaRef.current;
+    const cursorPosition = el.selectionStart ?? text.length;
+    const textBeforeCursor = text.slice(0, cursorPosition);
+    const lastSlashIndex = textBeforeCursor.lastIndexOf('/');
+    if (lastSlashIndex === -1) return;
+
+    const textAfterCursor = text.slice(cursorPosition);
+    const newText = textBeforeCursor.slice(0, lastSlashIndex) + reply.message_text + textAfterCursor;
+    setText(newText);
+    setShowSuggestions(false);
+
+    setTimeout(() => {
+      el.focus();
+      const newCursorPos = lastSlashIndex + reply.message_text.length;
+      el.setSelectionRange(newCursorPos, newCursorPos);
+      adjustHeight();
+    }, 10);
+  }, [text, adjustHeight]);
+
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (showSuggestions && suggestions.length > 0) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setSuggestionIndex((prev) => (prev + 1) % suggestions.length);
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setSuggestionIndex((prev) => (prev - 1 + suggestions.length) % suggestions.length);
+          return;
+        }
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (suggestions[suggestionIndex]) {
+            applyCannedReply(suggestions[suggestionIndex]);
+          }
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setShowSuggestions(false);
+          return;
+        }
+      }
+
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         handleSend();
       }
     },
-    [handleSend]
+    [showSuggestions, suggestions, suggestionIndex, applyCannedReply, handleSend]
   );
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-      setText(e.target.value);
+      const val = e.target.value;
+      setText(val);
       adjustHeight();
+
+      const cursorPosition = e.target.selectionStart ?? val.length;
+      const textBeforeCursor = val.slice(0, cursorPosition);
+      const lastSlashIndex = textBeforeCursor.lastIndexOf('/');
+
+      if (
+        lastSlashIndex !== -1 &&
+        (lastSlashIndex === 0 ||
+          textBeforeCursor[lastSlashIndex - 1] === ' ' ||
+          textBeforeCursor[lastSlashIndex - 1] === '\n')
+      ) {
+        const query = textBeforeCursor.slice(lastSlashIndex + 1);
+        if (!query.includes(' ')) {
+          const filtered = cannedReplies.filter((r) =>
+            r.shortcut.toLowerCase().startsWith(query.toLowerCase())
+          );
+          setSuggestions(filtered);
+          setShowSuggestions(filtered.length > 0);
+          setSuggestionIndex(0);
+          return;
+        }
+      }
+      setShowSuggestions(false);
     },
-    [adjustHeight]
+    [adjustHeight, cannedReplies]
   );
 
   // Ask the AI assistant for a suggested reply and drop it into the
@@ -424,7 +516,42 @@ export function MessageComposer({
   // ---- Render --------------------------------------------------------
 
   return (
-    <div className="border-t border-border bg-card p-3">
+    <div className="border-t border-border bg-card p-3 relative">
+      {showSuggestions && suggestions.length > 0 && (
+        <div className="absolute bottom-full left-3 mb-2 w-72 rounded-lg border border-border bg-popover p-1 shadow-md z-50">
+          <div className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider border-b border-border mb-1">
+            Quick Replies
+          </div>
+          <div className="max-h-48 overflow-y-auto space-y-0.5">
+            {suggestions.map((item, idx) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => applyCannedReply(item)}
+                className={cn(
+                  "w-full text-left px-2 py-1.5 rounded-md text-xs transition-colors flex flex-col gap-0.5",
+                  idx === suggestionIndex
+                    ? "bg-primary text-primary-foreground font-medium"
+                    : "text-foreground hover:bg-muted"
+                )}
+              >
+                <span className={cn(
+                  "font-mono font-semibold",
+                  idx === suggestionIndex ? "text-primary-foreground" : "text-primary"
+                )}>
+                  /{item.shortcut}
+                </span>
+                <span className={cn(
+                  "truncate text-[10px]",
+                  idx === suggestionIndex ? "text-primary-foreground/80" : "text-muted-foreground"
+                )}>
+                  {item.message_text}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {replyTo && (
         <div className="mb-2">
           <ReplyQuote

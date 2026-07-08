@@ -76,6 +76,7 @@ export function ConversationList({
   // matches if its contact carries any selected tag), consistent with
   // Broadcast audience filtering. Company is an exact match on the field.
   const [tags, setTags] = useState<Tag[]>([]);
+  const [customStatuses, setCustomStatuses] = useState<{ id: string; name: string; color: string }[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
 
@@ -88,40 +89,32 @@ export function ConversationList({
   // deep-link auto-select running a second time and wiping the active
   // thread's messages.
   // Mutation lives in an effect (not render) per React 19's refs rule;
-  // the fetch runs once on mount so it's fine to read the slightly
-  // older value — the very next render updates the ref for any
-  // subsequent async completion.
-  const onConversationsLoadedRef = useRef(onConversationsLoaded);
+  // see comment in message-composer.tsx.
+  const loadCallbackRef = useRef(onConversationsLoaded);
   useEffect(() => {
-    onConversationsLoadedRef.current = onConversationsLoaded;
+    loadCallbackRef.current = onConversationsLoaded;
   });
 
-  useEffect(() => {
+  const fetchConversations = useCallback(async () => {
     const supabase = createClient();
+    const { data, error } = await supabase
+      .from("conversations")
+      .select(CONVERSATION_SELECT)
+      .order("last_message_at", { ascending: false });
+
+    if (error) {
+      console.error("[conversation-list] fetch error:", error);
+    } else {
+      loadCallbackRef.current?.(normalizeConversations(data ?? []));
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
 
     (async () => {
-      const { data, error } = await supabase
-        .from("conversations")
-        .select(CONVERSATION_SELECT)
-        .order("last_message_at", { ascending: false });
-
-      if (cancelled) return;
-
-      if (error) {
-        // Supabase errors have non-enumerable properties — log fields explicitly
-        console.error("Failed to fetch conversations:", {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        });
-        setLoading(false);
-        return;
-      }
-
-      onConversationsLoadedRef.current(normalizeConversations(data ?? []));
-      setLoading(false);
+      await fetchConversations();
     })();
 
     return () => {
@@ -130,7 +123,7 @@ export function ConversationList({
     // `resyncToken` is included so the parent can force a refetch when
     // the realtime channel reconnects or the tab regains focus — catches
     // up on any events sent while the WS was disconnected or throttled.
-  }, [resyncToken]);
+  }, [resyncToken, fetchConversations]);
 
   // Tag definitions for the filter picker — loaded once so labels/colours
   // stay stable regardless of which conversations happen to be loaded.
@@ -140,6 +133,10 @@ export function ConversationList({
     (async () => {
       const { data } = await supabase.from("tags").select("*").order("name");
       if (!cancelled && data) setTags(data as Tag[]);
+    })();
+    (async () => {
+      const { data } = await supabase.from("conversation_custom_statuses").select("id, name, color").order("name");
+      if (!cancelled && data) setCustomStatuses(data);
     })();
     return () => {
       cancelled = true;
@@ -447,6 +444,7 @@ export function ConversationList({
                 conversation={conv}
                 isActive={conv.id === activeConversationId}
                 onSelect={handleSelect}
+                customStatuses={customStatuses}
               />
             ))}
           </div>
@@ -460,12 +458,14 @@ interface ConversationItemProps {
   conversation: Conversation;
   isActive: boolean;
   onSelect: (conversation: Conversation) => void;
+  customStatuses: { id: string; name: string; color: string }[];
 }
 
 function ConversationItem({
   conversation,
   isActive,
   onSelect,
+  customStatuses,
 }: ConversationItemProps) {
   const contact = conversation.contact;
   const displayName = contact?.name || contact?.phone || "Unknown";
@@ -480,6 +480,8 @@ function ConversationItem({
         addSuffix: false,
       })
     : "";
+
+  const leadStatus = customStatuses.find((s) => s.id === conversation.custom_status_id);
 
   return (
     <button
@@ -505,8 +507,20 @@ function ConversationItem({
       {/* Content */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-medium text-foreground">
-            {displayName}
+          <span className="truncate text-sm font-medium text-foreground flex items-center gap-1.5 min-w-0">
+            <span className="truncate">{displayName}</span>
+            {leadStatus && (
+              <span
+                className="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold leading-none border"
+                style={{
+                  backgroundColor: `${leadStatus.color}15`,
+                  color: leadStatus.color,
+                  borderColor: `${leadStatus.color}30`,
+                }}
+              >
+                {leadStatus.name}
+              </span>
+            )}
           </span>
           <span className="shrink-0 text-[10px] text-muted-foreground">{timeAgo}</span>
         </div>

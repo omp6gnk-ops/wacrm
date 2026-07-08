@@ -3,6 +3,7 @@
 import { useCan } from '@/hooks/use-can';
 
 import { CustomFieldsSettings } from './custom-fields-settings';
+import { LeadStatusesSettings } from './lead-statuses-settings';
 import { SettingsPanelHead } from './settings-panel-head';
 import { TagManager } from './tag-manager';
 
@@ -20,10 +21,15 @@ export function FieldsAndTagsPanel() {
     <section className="max-w-3xl animate-in fade-in-50 space-y-4 duration-200">
       <SettingsPanelHead
         title="Fields & tags"
-        description="Two ways to organize contacts: colour-coded tags for quick grouping, and custom fields for structured data."
+        description="Three ways to organize contacts: colour-coded tags, custom fields, and lead statuses."
       />
       <TagManager />
-      {canEditSettings ? <CustomFieldsSettings /> : null}
+      {canEditSettings ? (
+        <>
+          <CustomFieldsSettings />
+          <LeadStatusesSettings />
+        </>
+      ) : null}
     </section>
   );
 }

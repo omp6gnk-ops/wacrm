@@ -67,6 +67,7 @@ export function WhatsAppConfig() {
   const [verifyToken, setVerifyToken] = useState('');
   const [pin, setPin] = useState('');
   const [tokenEdited, setTokenEdited] = useState(false);
+  const [utilityOnlySafeguard, setUtilityOnlySafeguard] = useState(true);
 
   // True once /register has succeeded on Meta's side (timestamp set
   // in the row). When false, the saved config is metadata-only and
@@ -119,6 +120,7 @@ export function WhatsAppConfig() {
         setVerifyToken('');
         setPin('');
         setTokenEdited(false);
+        setUtilityOnlySafeguard(data.utility_only_safeguard ?? true);
       } else {
         setConfig(null);
         setPhoneNumberId('');
@@ -127,6 +129,7 @@ export function WhatsAppConfig() {
         setVerifyToken('');
         setPin('');
         setTokenEdited(false);
+        setUtilityOnlySafeguard(true);
       }
       // Clear any stale probe result when reloading the row.
       setRegistrationProbe(null);
@@ -205,6 +208,7 @@ export function WhatsAppConfig() {
         // requires it on first save or when changing numbers; for a
         // simple token rotation, leaving it blank skips re-register.
         pin: pin.trim() || null,
+        utility_only_safeguard: utilityOnlySafeguard,
       };
 
       if (tokenEdited && accessToken !== MASKED_TOKEN && accessToken.trim()) {
@@ -665,6 +669,24 @@ export function WhatsAppConfig() {
                 Leaving it blank also keeps an existing registration
                 untouched.
               </p>
+            </div>
+
+            <div className="flex items-center space-x-2 border-t border-border pt-4 mt-4">
+              <input
+                type="checkbox"
+                id="utility-only-safeguard"
+                checked={utilityOnlySafeguard}
+                onChange={(e) => setUtilityOnlySafeguard(e.target.checked)}
+                className="h-4 w-4 rounded border-border text-primary focus:ring-primary bg-muted"
+              />
+              <div className="grid gap-1.5 leading-none">
+                <Label htmlFor="utility-only-safeguard" className="text-sm font-medium text-foreground cursor-pointer">
+                  Only Allow Utility Broadcasts (Safeguard)
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Prevent accidental runs of marketing campaigns that charge up to 7x higher Meta rates.
+                </p>
+              </div>
             </div>
           </CardContent>
         </Card>

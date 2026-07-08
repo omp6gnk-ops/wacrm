@@ -175,11 +175,51 @@ export async function POST(request: Request) {
     }
     const templateRow = rawTemplateRow ?? null
 
+    // Utility safeguard category check
+    if (config.utility_only_safeguard) {
+      if (!templateRow) {
+        return NextResponse.json(
+          { error: 'Campaign blocked: Utility-only safeguard is active, and the template must be synced from Meta first.' },
+          { status: 400 }
+        )
+      }
+      if (templateRow.category?.toLowerCase() !== 'utility') {
+        return NextResponse.json(
+          { error: `Campaign blocked: Utility-only safeguard is active, and this template is categorized as ${templateRow.category || 'MARKETING'}.` },
+          { status: 400 }
+        )
+      }
+    }
+
+    // Resolve current wallet balance
+    const { data: account } = await supabase
+      .from('accounts')
+      .select('wallet_balance')
+      .eq('id', accountId)
+      .single()
+    let balance = Number(account?.wallet_balance ?? 0)
+    const cost = templateRow?.category?.toLowerCase() === 'utility' ? 0.115 : 0.800
+
     const results: BroadcastResult[] = []
     let sentCount = 0
     let failedCount = 0
 
     for (const recipient of recipients) {
+      // Check wallet balance before sending
+      if (balance < cost) {
+        const index = recipients.indexOf(recipient)
+        const remaining = recipients.slice(index)
+        for (const rem of remaining) {
+          results.push({
+            phone: rem.phone,
+            status: 'failed',
+            error: 'Insufficient wallet balance',
+          })
+          failedCount++
+        }
+        break
+      }
+
       const sanitized = sanitizePhoneForMeta(recipient.phone)
 
       if (!isValidE164(sanitized)) {
@@ -232,6 +272,24 @@ export async function POST(request: Request) {
           whatsapp_message_id: sentMessageId,
         })
         sentCount++
+        balance -= cost
+
+        // Update database balance
+        await supabase
+          .from('accounts')
+          .update({ wallet_balance: balance })
+          .eq('id', accountId)
+
+        // Log transaction
+        await supabase
+          .from('wallet_transactions')
+          .insert({
+            account_id: accountId,
+            user_id: user.id,
+            amount: -cost,
+            type: 'debit',
+            description: `Dashboard Broadcast message sent to ${recipient.phone} (Template: ${template_name})`,
+          })
       } else {
         console.error(
           `Failed to send broadcast to ${recipient.phone}:`,

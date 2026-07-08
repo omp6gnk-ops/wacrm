@@ -143,6 +143,24 @@ export async function createBroadcast(
   }
   const templateRow = (rawTemplateRow as MessageTemplate | null) ?? null;
 
+  // Utility safeguard category check
+  if (config.utility_only_safeguard) {
+    if (!templateRow) {
+      throw new BroadcastError(
+        'utility_safeguard_blocked',
+        'Campaign blocked: Utility-only safeguard is active, and the template must be synced from Meta first.',
+        400
+      );
+    }
+    if (templateRow.category?.toLowerCase() !== 'utility') {
+      throw new BroadcastError(
+        'utility_safeguard_blocked',
+        `Campaign blocked: Utility-only safeguard is active, and this template is categorized as ${templateRow.category || 'MARKETING'}.`,
+        400
+      );
+    }
+  }
+
   // Resolve each recipient to a contact. Invalid phones are dropped
   // (counted as rejected) rather than aborting the whole broadcast.
   const resolved: { contactId: string; phone: string; params: string[] }[] = [];
@@ -265,7 +283,45 @@ export async function deliverBroadcast(
 ): Promise<void> {
   let sentCount = 0;
 
+  // Resolve accountId and userId from broadcast
+  const { data: bcast } = await db
+    .from('broadcasts')
+    .select('account_id, user_id')
+    .eq('id', plan.broadcastId)
+    .single();
+
+  const accountId = bcast?.account_id;
+  const userId = bcast?.user_id;
+
+  if (!accountId) return;
+
+  // Get current wallet balance
+  const { data: account } = await db
+    .from('accounts')
+    .select('wallet_balance')
+    .eq('id', accountId)
+    .single();
+  let balance = Number(account?.wallet_balance ?? 0);
+
+  // Cost per message based on category. Utility charge is 0.115 tokens.
+  const cost = plan.templateRow?.category?.toLowerCase() === 'utility' ? 0.115 : 0.800;
+
   for (const recipient of plan.planned) {
+    if (balance < cost) {
+      // Balance is too low! Fail all remaining recipients.
+      const index = plan.planned.indexOf(recipient);
+      for (const rem of plan.planned.slice(index)) {
+        await db
+          .from('broadcast_recipients')
+          .update({
+            status: 'failed',
+            error_message: 'Insufficient wallet balance',
+          })
+          .eq('id', rem.recipientRowId);
+      }
+      break;
+    }
+
     const variants = phoneVariants(recipient.phone);
     let sentMessageId: string | null = null;
     let lastError: string | null = null;
@@ -294,6 +350,25 @@ export async function deliverBroadcast(
 
     if (sentMessageId) {
       sentCount++;
+      balance -= cost;
+
+      // Update wallet balance in DB
+      await db
+        .from('accounts')
+        .update({ wallet_balance: balance })
+        .eq('id', accountId);
+
+      // Log wallet transaction
+      await db
+        .from('wallet_transactions')
+        .insert({
+          account_id: accountId,
+          user_id: userId,
+          amount: -cost,
+          type: 'debit',
+          description: `API Broadcast message sent to ${recipient.phone} (Template: ${plan.templateName})`,
+        });
+
       await db
         .from('broadcast_recipients')
         .update({
