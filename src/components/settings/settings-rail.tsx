@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type ReactNode } from 'react';
 
+import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/lib/utils';
 import {
   RAIL_GROUPS,
@@ -31,6 +32,7 @@ export function SettingsRail({
   hints?: Partial<Record<SettingsSection, ReactNode>>;
 }) {
   const activeRef = useRef<HTMLButtonElement>(null);
+  const { canEditSettings } = useAuth();
 
   // When horizontal (mobile), keep the active chip in view. On desktop
   // the rail is a static column, so skip.
@@ -54,6 +56,8 @@ export function SettingsRail({
       )}
     >
       {RAIL_GROUPS.map(({ label, group }) => {
+        if (group === 'workspace' && !canEditSettings) return null;
+
         const items = SETTINGS_SECTIONS.filter(
           (s) => SECTION_META[s].group === group,
         );

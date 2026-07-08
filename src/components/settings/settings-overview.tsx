@@ -35,7 +35,7 @@ export function SettingsOverview({
 }: {
   onSelect: (section: SettingsSection) => void;
 }) {
-  const { user, profile, accountId, accountRole, defaultCurrency, canManageMembers } =
+  const { user, profile, accountId, accountRole, defaultCurrency, canManageMembers, canEditSettings } =
     useAuth();
   const { mode, theme } = useTheme();
 
@@ -217,6 +217,10 @@ export function SettingsOverview({
     },
   ];
 
+  const allowedTiles = tiles.filter(
+    (t) => SECTION_META[t.section].group !== 'workspace' || canEditSettings
+  );
+
   return (
     <section className="animate-in fade-in-50 duration-200">
       {/* Identity */}
@@ -249,7 +253,7 @@ export function SettingsOverview({
 
       {/* Status tiles */}
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {tiles.map(({ section, loading, subtitle }) => {
+        {allowedTiles.map(({ section, loading, subtitle }) => {
           const meta = SECTION_META[section];
           const Icon = meta.icon;
           return (

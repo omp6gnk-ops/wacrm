@@ -13,7 +13,9 @@ import {
   ArrowRight,
   ArrowLeft,
   X,
+  FileText,
 } from 'lucide-react';
+import { parseContactCsv } from '@/lib/contacts/parse-contact-csv';
 
 type AudienceType = 'all' | 'tags' | 'custom_field' | 'csv';
 type CustomFieldOperator = 'is' | 'is_not' | 'contains';
@@ -384,6 +386,64 @@ export function Step2SelectAudience({
                 placeholder="Value"
                 className="h-9 rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
               />
+            </div>
+          )}
+        </div>
+      )}
+
+      {audience.type === 'csv' && (
+        <div className="rounded-xl border border-border bg-card/50 p-4 space-y-3 animate-in fade-in-50 duration-200">
+          <p className="text-sm font-medium text-foreground">Upload CSV File</p>
+          <div className="flex flex-col items-center justify-center border-2 border-dashed border-border rounded-lg p-6 bg-muted/30 hover:bg-muted/50 transition-colors">
+            <input
+              type="file"
+              accept=".csv"
+              id="broadcast-csv-upload"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+
+                try {
+                  const text = await file.text();
+                  const { rows } = parseContactCsv(text);
+
+                  if (rows.length === 0) {
+                    alert("No valid contacts found in CSV. Make sure you have a 'phone' column header.");
+                    return;
+                  }
+
+                  onUpdate({
+                    ...audience,
+                    csvContacts: rows.map((r) => ({ phone: r.phone, name: r.name })),
+                  });
+                } catch (err) {
+                  alert("Failed to parse CSV file.");
+                }
+              }}
+            />
+            <label htmlFor="broadcast-csv-upload" className="cursor-pointer flex flex-col items-center gap-2 w-full text-center">
+              <Upload className="h-8 w-8 text-primary" />
+              <span className="text-sm text-foreground font-medium">Click to upload CSV</span>
+              <span className="text-xs text-muted-foreground font-mono">Header must include "phone" (optional: "name")</span>
+            </label>
+          </div>
+
+          {audience.csvContacts && audience.csvContacts.length > 0 && (
+            <div className="mt-3 text-xs text-muted-foreground bg-muted/50 border border-border p-3 rounded-lg flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-primary" />
+                <span>
+                  Successfully parsed <span className="font-semibold text-foreground">{audience.csvContacts.length}</span> contacts.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => onUpdate({ ...audience, csvContacts: undefined })}
+                className="text-red-400 hover:text-red-300 font-medium"
+              >
+                Clear
+              </button>
             </div>
           )}
         </div>

@@ -18,13 +18,14 @@ import { MembersTab } from '@/components/settings/members-tab';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import {
   resolveSection,
+  SECTION_META,
   type SettingsSection,
 } from '@/components/settings/settings-sections';
 
 export default function SettingsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { defaultCurrency } = useAuth();
+  const { defaultCurrency, canEditSettings } = useAuth();
   const { mode } = useTheme();
 
   // The URL (`?tab=`) is the single source of truth for the active
@@ -32,6 +33,12 @@ export default function SettingsPage() {
   // app sidebar/header working. Legacy tab values (tags, custom-fields)
   // resolve onto their new home; unknown/empty → the Overview landing.
   const section = resolveSection(searchParams.get('tab'));
+
+  // Gate workspace sections for admins only
+  const activeSection =
+    SECTION_META[section].group === 'workspace' && !canEditSettings
+      ? 'overview'
+      : section;
 
   const go = (next: SettingsSection) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -76,8 +83,8 @@ export default function SettingsPage() {
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[236px_minmax(0,1fr)] lg:items-start">
-        <SettingsRail active={section} onSelect={go} hints={hints} />
-        <div className="min-w-0">{panel[section]}</div>
+        <SettingsRail active={activeSection} onSelect={go} hints={hints} />
+        <div className="min-w-0">{panel[activeSection]}</div>
       </div>
     </div>
   );
