@@ -31,7 +31,9 @@ export const metadata: Metadata = {
     follow: false,
   },
   icons: {
-    icon: [{ url: "/icon" }],
+    icon: [{ url: "/gnk_crm_favicon.png", type: "image/png" }],
+    shortcut: "/gnk_crm_favicon.png",
+    apple: "/gnk_crm_favicon.png",
   },
   formatDetection: {
     email: false,
