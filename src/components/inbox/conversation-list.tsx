@@ -102,6 +102,14 @@ export function ConversationList({
       query = query.or(`last_customer_message_at.gt.${twentyFourHoursAgo},last_customer_message_at.is.null`);
     }
 
+    if (assignmentFilter === 'my_chats' && currentUserId) {
+      query = query.eq('assigned_agent_id', currentUserId);
+    } else if (assignmentFilter === 'unassigned') {
+      query = query.is('assigned_agent_id', null);
+    } else if (selectedAgentId !== null) {
+      query = query.eq('assigned_agent_id', selectedAgentId);
+    }
+
     const { data, error } = await query
       .order("last_message_at", { ascending: false })
       .limit(250);
@@ -112,7 +120,7 @@ export function ConversationList({
       loadCallbackRef.current?.(normalizeConversations(data ?? []));
     }
     setLoading(false);
-  }, [showExpiredOnly]);
+  }, [showExpiredOnly, assignmentFilter, currentUserId, selectedAgentId]);
 
   useEffect(() => {
     let cancelled = false;
