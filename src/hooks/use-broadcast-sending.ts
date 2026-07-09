@@ -174,7 +174,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     } else if (audience.type === 'custom_field' && audience.customField) {
       contacts = await resolveCustomFieldAudience(supabase, audience.customField);
     } else if ((audience.type === 'csv' || audience.type === 'manual') && audience.csvContacts) {
-      contacts = await upsertCsvContacts(supabase, audience.csvContacts);
+      contacts = await upsertCsvContacts(supabase, audience.csvContacts, audience.tagIds);
     }
 
     // Apply exclude tags (works across all contact-derived audience
@@ -194,6 +194,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
   async function upsertCsvContacts(
     supabase: ReturnType<typeof createClient>,
     csvRows: { phone: string; name?: string }[],
+    tagIds?: string[],
   ): Promise<Contact[]> {
     if (csvRows.length === 0) return [];
 
@@ -271,10 +272,33 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       }
     }
 
-    // Preserve input order so analytics roughly matches the CSV order.
-    return phones
+    // Save contact tags if selected
+    const contactsList = phones
       .map((p) => byPhone.get(p))
       .filter((c): c is Contact => Boolean(c));
+
+    if (tagIds && tagIds.length > 0 && contactsList.length > 0) {
+      const joinRows = [];
+      for (const contact of contactsList) {
+        for (const tagId of tagIds) {
+          joinRows.push({
+            contact_id: contact.id,
+            tag_id: tagId,
+          });
+        }
+      }
+      
+      const { error: tagInsertErr } = await supabase
+        .from('contact_tags')
+        .upsert(joinRows, { onConflict: 'contact_id,tag_id' });
+        
+      if (tagInsertErr) {
+        console.error('Failed to save contact tags during broadcast import:', tagInsertErr);
+      }
+    }
+
+    // Preserve input order so analytics roughly matches the CSV order.
+    return contactsList;
   }
 
   async function resolveCustomFieldAudience(

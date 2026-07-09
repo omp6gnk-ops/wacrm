@@ -158,9 +158,20 @@ export async function resolveConversationByPhone(
       contact_id: contactId,
     })
     .select('id')
-    .single();
+    .maybeSingle();
 
   if (convErr || !newConv) {
+    if (convErr?.code === '23505') {
+      const { data: raced, error: raceError } = await db
+        .from('conversations')
+        .select('id')
+        .eq('account_id', accountId)
+        .eq('contact_id', contactId)
+        .maybeSingle();
+      if (!raceError && raced) {
+        return { conversationId: raced.id, contactId, contactCreated };
+      }
+    }
     console.error('[resolve-conversation] conversation create error:', convErr);
     throw new SendMessageError(
       'db_error',

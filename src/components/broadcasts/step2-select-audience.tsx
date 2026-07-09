@@ -54,6 +54,12 @@ const audienceOptions: {
     icon: Users,
   },
   {
+    type: 'tags',
+    label: 'Filter by Tags',
+    description: 'Filter contacts by their tags',
+    icon: Tags,
+  },
+  {
     type: 'manual',
     label: 'Copy & Paste',
     description: 'Type or copy-paste phone numbers manually',
@@ -260,6 +266,9 @@ export function Step2SelectAudience({
 
   const isValid =
     audience.type === 'all' ||
+    (audience.type === 'tags' &&
+      audience.tagIds &&
+      audience.tagIds.length > 0) ||
     (audience.type === 'custom_field' &&
       !!audience.customField?.fieldId &&
       audience.customField.value.length > 0) ||
@@ -369,6 +378,46 @@ export function Step2SelectAudience({
           <p className="text-xs text-muted-foreground leading-normal">
             Aap ek baar mein multiple phone numbers paste kar sakte hain (separated by newlines, commas, or semicolons). Numbers automatically parse hokar select ho jayenge.
           </p>
+        </div>
+      )}
+
+      {audience.type === 'tags' && (
+        <div className="space-y-3 rounded-xl border border-border bg-card/50 p-4 animate-in fade-in-50 duration-200">
+          <p className="text-sm font-medium text-foreground">Select Tags to Target</p>
+          {loadingTags ? (
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <span className="text-xs text-muted-foreground">Loading tags…</span>
+            </div>
+          ) : tags.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              No tags available. Create tags in the Contacts section first.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {tags.map((tag) => {
+                const isTargeted = audience.tagIds?.includes(tag.id);
+                return (
+                  <button
+                    key={tag.id}
+                    type="button"
+                    onClick={() => toggleTag(tag.id)}
+                    className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
+                      isTargeted
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-muted text-muted-foreground hover:border-border'
+                    }`}
+                  >
+                    <span
+                      className="mr-1.5 h-2 w-2 rounded-full"
+                      style={{ backgroundColor: tag.color }}
+                    />
+                    {tag.name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -517,6 +566,51 @@ export function Step2SelectAudience({
               >
                 Clear
               </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Option to assign tags to newly uploaded/pasted contacts */}
+      {(audience.type === 'csv' || audience.type === 'manual') && (
+        <div className="rounded-xl border border-border bg-card/50 p-4 space-y-3 animate-in fade-in-50 duration-200">
+          <div className="flex items-center gap-2">
+            <Tags className="h-4 w-4 text-primary" />
+            <p className="text-sm font-medium text-foreground">
+              Assign tags to these imported contacts
+            </p>
+            <span className="text-xs text-muted-foreground">(optional)</span>
+          </div>
+          {loadingTags ? (
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <span className="text-xs text-muted-foreground">Loading tags…</span>
+            </div>
+          ) : tags.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No tags available.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {tags.map((tag) => {
+                const isSelected = audience.tagIds?.includes(tag.id);
+                return (
+                  <button
+                    key={tag.id}
+                    type="button"
+                    onClick={() => toggleTag(tag.id)}
+                    className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
+                      isSelected
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-muted text-muted-foreground hover:border-border'
+                    }`}
+                  >
+                    <span
+                      className="mr-1.5 h-2 w-2 rounded-full"
+                      style={{ backgroundColor: tag.color }}
+                    />
+                    {tag.name}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

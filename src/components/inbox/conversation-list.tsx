@@ -56,10 +56,31 @@ export function ConversationList({
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [loading, setLoading] = useState(true);
   
-  const isAgentRole = accountRole === 'agent' || accountRole === 'viewer';
-  const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>(
-    isAgentRole ? 'my_chats' : 'all_chats'
-  );
+  const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>('all_chats');
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("wacrm:inbox:assignment-filter");
+      if (stored === 'all_chats' || stored === 'my_chats' || stored === 'unassigned') {
+        setAssignmentFilter(stored as AssignmentFilter);
+      } else {
+        const isAgent = accountRole === 'agent' || accountRole === 'viewer';
+        setAssignmentFilter(isAgent ? 'my_chats' : 'all_chats');
+      }
+    } catch {
+      const isAgent = accountRole === 'agent' || accountRole === 'viewer';
+      setAssignmentFilter(isAgent ? 'my_chats' : 'all_chats');
+    }
+  }, [accountRole]);
+
+  const handleAssignmentFilterChange = useCallback((val: AssignmentFilter) => {
+    setAssignmentFilter(val);
+    try {
+      localStorage.setItem("wacrm:inbox:assignment-filter", val);
+    } catch {
+      // ignore
+    }
+  }, []);
   // Contact-based filters (issue #272). Tags use OR logic (a conversation
   // matches if its contact carries any selected tag), consistent with
   // Broadcast audience filtering. Company is an exact match on the field.
@@ -294,7 +315,7 @@ export function ConversationList({
           ].map((tab) => (
             <button
               key={tab.value}
-              onClick={() => setAssignmentFilter(tab.value)}
+              onClick={() => handleAssignmentFilterChange(tab.value)}
               className={cn(
                 'flex-1 rounded-md px-2 py-1 text-xs font-medium transition-all',
                 assignmentFilter === tab.value

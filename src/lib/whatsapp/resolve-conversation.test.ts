@@ -54,6 +54,11 @@ function makeDb(script: Script): SupabaseClient {
           data: script.existingConversation ?? null,
           error: null,
         });
+      if (table === 'conversations' && mode === 'insert')
+        return Promise.resolve({
+          data: { id: script.insertedConversationId },
+          error: null,
+        });
       return Promise.resolve({ data: null, error: null });
     },
     single: () => {

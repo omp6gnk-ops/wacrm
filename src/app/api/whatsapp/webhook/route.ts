@@ -1073,7 +1073,7 @@ async function findOrCreateConversation(
     .select('*')
     .eq('account_id', accountId)
     .eq('contact_id', contactId)
-    .single()
+    .maybeSingle()
 
   if (!findError && existing) {
     return { conversation: existing, created: false }
@@ -1089,10 +1089,36 @@ async function findOrCreateConversation(
       contact_id: contactId,
     })
     .select()
-    .single()
+    .maybeSingle()
 
   if (createError) {
+    // Catch unique violation error (code 23505) and retrieve the raced row
+    if (createError.code === '23505') {
+      const { data: raced, error: raceError } = await supabaseAdmin()
+        .from('conversations')
+        .select('*')
+        .eq('account_id', accountId)
+        .eq('contact_id', contactId)
+        .maybeSingle()
+
+      if (!raceError && raced) {
+        return { conversation: raced, created: false }
+      }
+    }
     console.error('Error creating conversation:', createError)
+    return null
+  }
+
+  if (!newConv) {
+    const { data: refetched } = await supabaseAdmin()
+      .from('conversations')
+      .select('*')
+      .eq('account_id', accountId)
+      .eq('contact_id', contactId)
+      .maybeSingle()
+    if (refetched) {
+      return { conversation: refetched, created: false }
+    }
     return null
   }
 
