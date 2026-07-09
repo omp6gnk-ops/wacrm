@@ -160,6 +160,7 @@ export interface Conversation {
   unread_count: number;
   custom_status_id?: string;
   exported_to_sheet?: boolean;
+  has_agent_replied?: boolean;
   created_at: string;
   updated_at: string;
   contact?: Contact;

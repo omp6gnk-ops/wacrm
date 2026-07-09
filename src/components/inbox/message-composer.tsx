@@ -241,38 +241,59 @@ export function MessageComposer({
     const textAfterCursor = text.slice(cursorPosition);
     setShowSuggestions(false);
 
-    if (reply.media_url && reply.media_type) {
-      // Stage media attachment as draft in composer, with caption set to reply text
-      setDraft({
-        kind: reply.media_type as any,
-        mediaUrl: reply.media_url,
-        path: '',
-        filename: reply.media_url.split('/').pop() || 'file',
-        caption: reply.message_text,
-      });
+    // Get all matches for this shortcut
+    const matches = cannedReplies.filter(r => r.shortcut.toLowerCase() === reply.shortcut.toLowerCase());
+    if (matches.length === 0) return;
 
-      // Clear the slash trigger command from the input
-      const newText = textBeforeCursor.slice(0, lastSlashIndex) + textAfterCursor;
-      setText(newText);
+    // Clear the slash trigger command from input
+    const newText = textBeforeCursor.slice(0, lastSlashIndex) + textAfterCursor;
+    setText(newText);
+    setTimeout(() => {
+      el.focus();
+      el.setSelectionRange(lastSlashIndex, lastSlashIndex);
+      adjustHeight();
+    }, 10);
 
-      setTimeout(() => {
-        el.focus();
-        el.setSelectionRange(lastSlashIndex, lastSlashIndex);
-        adjustHeight();
-      }, 10);
+    if (matches.length === 1) {
+      const singleReply = matches[0];
+      if (singleReply.media_url && singleReply.media_type) {
+        // Stage media attachment as draft in composer, with caption set to reply text
+        setDraft({
+          kind: singleReply.media_type as any,
+          mediaUrl: singleReply.media_url,
+          path: '',
+          filename: singleReply.media_url.split('/').pop() || 'file',
+          caption: singleReply.message_text,
+        });
+      } else {
+        // Regular text quick reply replacement
+        const textWithReply = textBeforeCursor.slice(0, lastSlashIndex) + singleReply.message_text + textAfterCursor;
+        setText(textWithReply);
+
+        setTimeout(() => {
+          el.focus();
+          const newCursorPos = lastSlashIndex + singleReply.message_text.length;
+          el.setSelectionRange(newCursorPos, newCursorPos);
+          adjustHeight();
+        }, 10);
+      }
     } else {
-      // Regular text quick reply replacement
-      const newText = textBeforeCursor.slice(0, lastSlashIndex) + reply.message_text + textAfterCursor;
-      setText(newText);
-
-      setTimeout(() => {
-        el.focus();
-        const newCursorPos = lastSlashIndex + reply.message_text.length;
-        el.setSelectionRange(newCursorPos, newCursorPos);
-        adjustHeight();
-      }, 10);
+      // Send multiple messages in sequence immediately!
+      for (const item of matches) {
+        if (item.media_url && item.media_type) {
+          onSendMedia({
+            kind: item.media_type as any,
+            mediaUrl: item.media_url,
+            path: "",
+            filename: item.media_url.split('/').pop() || 'file',
+            caption: item.message_text,
+          });
+        } else if (item.message_text.trim()) {
+          onSend(item.message_text.trim());
+        }
+      }
     }
-  }, [text, adjustHeight]);
+  }, [text, adjustHeight, cannedReplies, onSend, onSendMedia]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -330,8 +351,19 @@ export function MessageComposer({
           const filtered = cannedReplies.filter((r) =>
             r.shortcut.toLowerCase().startsWith(query.toLowerCase())
           );
-          setSuggestions(filtered);
-          setShowSuggestions(filtered.length > 0);
+
+          // Deduplicate suggestions by shortcut
+          const seen = new Set();
+          const unique: typeof cannedReplies = [];
+          for (const item of filtered) {
+            if (!seen.has(item.shortcut)) {
+              seen.add(item.shortcut);
+              unique.push(item);
+            }
+          }
+
+          setSuggestions(unique);
+          setShowSuggestions(unique.length > 0);
           setSuggestionIndex(0);
           return;
         }
@@ -435,10 +467,47 @@ export function MessageComposer({
   );
 
   const handlePicked = useCallback(
-    (kind: "image" | "video" | "document", file: File | undefined) => {
-      if (file) void stageUpload(kind, file);
+    async (kind: "image" | "video" | "document", fileList: FileList | null | undefined) => {
+      if (!fileList || fileList.length === 0) return;
+      const files = Array.from(fileList);
+
+      if (files.length === 1) {
+        void stageUpload(kind, files[0]);
+      } else {
+        const toastId = toast.loading(`Uploading and sending ${files.length} files...`);
+        let successCount = 0;
+        for (const file of files) {
+          const max = MEDIA_MAX_BYTES_BY_KIND[kind];
+          if (file.size > max) {
+            toast.error(
+              `Skipped "${file.name}": File size exceeds limit of ${Math.round(max / 1024 / 1024)} MB.`,
+              { duration: 4000 }
+            );
+            continue;
+          }
+          try {
+            const { publicUrl, path } = await uploadAccountMedia(CHAT_MEDIA_BUCKET, file);
+            onSendMedia({
+              kind: kind as ComposerMediaKind,
+              mediaUrl: publicUrl,
+              path: path,
+              filename: file.name,
+              caption: "",
+            });
+            successCount++;
+          } catch (err: any) {
+            console.error(`Failed to upload ${file.name}:`, err);
+            toast.error(`Failed to send "${file.name}": ${err.message || "Upload error"}`);
+          }
+        }
+        if (successCount > 0) {
+          toast.success(`Successfully sent ${successCount} files!`, { id: toastId });
+        } else {
+          toast.dismiss(toastId);
+        }
+      }
     },
-    [stageUpload],
+    [stageUpload, onSendMedia],
   );
 
   // ---- Voice recording (client-side Ogg/Opus, no server transcode) ---
@@ -588,7 +657,9 @@ export function MessageComposer({
                   "truncate text-[10px]",
                   idx === suggestionIndex ? "text-primary-foreground/80" : "text-muted-foreground"
                 )}>
-                  {item.message_text}
+                  {cannedReplies.filter(r => r.shortcut.toLowerCase() === item.shortcut.toLowerCase()).length > 1
+                    ? `[Multiple replies] ${item.message_text}`
+                    : item.message_text}
                 </span>
               </button>
             ))}
@@ -625,30 +696,33 @@ export function MessageComposer({
       <input
         ref={imageInputRef}
         type="file"
+        multiple
         accept={PICKER_ACCEPT.image}
         className="hidden"
         onChange={(e) => {
-          handlePicked("image", e.target.files?.[0]);
+          handlePicked("image", e.target.files);
           e.target.value = "";
         }}
       />
       <input
         ref={videoInputRef}
         type="file"
+        multiple
         accept={PICKER_ACCEPT.video}
         className="hidden"
         onChange={(e) => {
-          handlePicked("video", e.target.files?.[0]);
+          handlePicked("video", e.target.files);
           e.target.value = "";
         }}
       />
       <input
         ref={documentInputRef}
         type="file"
+        multiple
         accept={PICKER_ACCEPT.document}
         className="hidden"
         onChange={(e) => {
-          handlePicked("document", e.target.files?.[0]);
+          handlePicked("document", e.target.files);
           e.target.value = "";
         }}
       />

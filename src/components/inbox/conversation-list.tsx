@@ -38,7 +38,7 @@ interface ConversationListProps {
   showExpiredOnly?: boolean;
 }
 
-type InboxFilter = "all" | "unread" | string;
+type InboxFilter = "all" | "unread" | "new_inbound" | "reply_to_agent";
 
 type AssignmentFilter = 'all_chats' | 'my_chats' | 'unassigned';
 
@@ -71,6 +71,7 @@ export function ConversationList({
   // Teammates / Agents list and active filter state
   const [profiles, setProfiles] = useState<{ user_id: string; full_name: string | null }[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [selectedStatusId, setSelectedStatusId] = useState<string | null>(null);
 
   // Keep the latest callback in a ref so the fetch effect below can
   // have a stable, empty-dep identity. Previously the fetch useCallback
@@ -193,9 +194,14 @@ export function ConversationList({
 
     if (filter === "unread") {
       result = result.filter((c) => c.unread_count > 0);
-    } else if (filter !== "all") {
-      // Filter by custom_status_id (lead status)
-      result = result.filter((c) => c.custom_status_id === filter);
+    } else if (filter === "new_inbound") {
+      result = result.filter((c) => c.unread_count > 0 && !c.has_agent_replied);
+    } else if (filter === "reply_to_agent") {
+      result = result.filter((c) => c.unread_count > 0 && c.has_agent_replied);
+    }
+
+    if (selectedStatusId !== null) {
+      result = result.filter((c) => c.custom_status_id === selectedStatusId);
     }
 
     // Contact-based filters (tags via OR logic, exact company match).
@@ -226,7 +232,7 @@ export function ConversationList({
     });
 
     return result;
-  }, [conversations, assignmentFilter, currentUserId, filter, search, selectedTagIds, selectedCompany, showExpiredOnly, selectedAgentId]);
+  }, [conversations, assignmentFilter, currentUserId, filter, search, selectedTagIds, selectedCompany, showExpiredOnly, selectedAgentId, selectedStatusId]);
 
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
@@ -256,10 +262,11 @@ export function ConversationList({
   );
 
   const filterOptions: { label: string; value: InboxFilter; color?: string }[] = useMemo(() => [
-    { label: "All", value: "all" },
-    { label: "Unread", value: "unread" },
-    ...customStatuses.map((s) => ({ label: s.name, value: s.id, color: s.color })),
-  ], [customStatuses]);
+    { label: "All Chats", value: "all" },
+    { label: "Unread (All)", value: "unread" },
+    { label: "New Inbound (First Msg)", value: "new_inbound" },
+    { label: "Reply to Agent (Returning)", value: "reply_to_agent" },
+  ], []);
 
   const activeFilter = filterOptions.find((o) => o.value === filter);
 
@@ -337,43 +344,51 @@ export function ConversationList({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {tags.length > 0 && (
+          {customStatuses.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger
                 className={cn(
                   "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
-                  selectedTagIds.length > 0
+                  selectedStatusId !== null
                     ? "text-primary"
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
-                Tags
-                {selectedTagIds.length > 0 && (
-                  <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
-                    {selectedTagIds.length}
-                  </span>
-                )}
+                {selectedStatusId
+                  ? (customStatuses.find((s) => s.id === selectedStatusId)?.name ?? "Lead Status")
+                  : "Lead Status"}
                 <ChevronDown className="h-3 w-3" />
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="start"
-                className="max-h-64 w-56 border-border bg-popover"
+                className="max-h-64 w-56 border-border bg-popover overflow-y-auto"
               >
-                {tags.map((t) => (
-                  <DropdownMenuCheckboxItem
-                    key={t.id}
-                    checked={selectedTagIds.includes(t.id)}
-                    onCheckedChange={() => toggleTag(t.id)}
-                    className="text-sm text-popover-foreground"
+                <DropdownMenuItem
+                  onClick={() => setSelectedStatusId(null)}
+                  className={cn(
+                    "text-sm font-medium",
+                    selectedStatusId === null ? "text-primary" : "text-popover-foreground"
+                  )}
+                >
+                  All Statuses
+                </DropdownMenuItem>
+                {customStatuses.map((s) => (
+                  <DropdownMenuItem
+                    key={s.id}
+                    onClick={() => setSelectedStatusId(s.id)}
+                    className={cn(
+                      "text-sm",
+                      selectedStatusId === s.id ? "text-primary" : "text-popover-foreground"
+                    )}
                   >
                     <span className="flex items-center gap-2">
                       <span
                         className="h-2 w-2 shrink-0 rounded-full"
-                        style={{ backgroundColor: t.color }}
+                        style={{ backgroundColor: s.color }}
                       />
-                      <span className="truncate">{t.name}</span>
+                      {s.name}
                     </span>
-                  </DropdownMenuCheckboxItem>
+                  </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>

@@ -115,11 +115,6 @@ export function CannedPanel() {
       return;
     }
 
-    // Check if duplicate shortcut
-    if (responses.some((r) => r.shortcut === cleanShortcut)) {
-      toast.error('A quick reply with this shortcut already exists');
-      return;
-    }
 
     if (!accountId || !user) return;
 
