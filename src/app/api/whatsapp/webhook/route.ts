@@ -57,6 +57,10 @@ interface WhatsAppMessage {
     button_reply?: { id: string; title: string }
     list_reply?: { id: string; title: string; description?: string }
   }
+  button?: {
+    payload: string
+    text: string
+  }
   /** Present when the customer swipe-replies to one of our messages. */
   context?: { id: string }
 }
@@ -965,6 +969,19 @@ async function parseMessageContent(
         }
       }
       return { ...empty, contentText: '[Interactive reply]' }
+    }
+
+    case 'button': {
+      // Meta delivers type: 'button' when the customer taps a quick-reply button
+      // on a template message we sent.
+      if (message.button) {
+        return {
+          ...empty,
+          contentText: message.button.text || null,
+          interactiveReplyId: message.button.payload || null,
+        }
+      }
+      return empty;
     }
 
     default:

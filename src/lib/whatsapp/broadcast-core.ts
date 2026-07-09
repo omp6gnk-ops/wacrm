@@ -306,86 +306,105 @@ export async function deliverBroadcast(
   // Cost per message based on category. Utility charge is 0.115 tokens.
   const cost = plan.templateRow?.category?.toLowerCase() === 'utility' ? 0.115 : 0.800;
 
-  for (const recipient of plan.planned) {
-    if (balance < cost) {
-      // Balance is too low! Fail all remaining recipients.
-      const index = plan.planned.indexOf(recipient);
-      for (const rem of plan.planned.slice(index)) {
+  const BATCH_SIZE = 15;
+  const recipients = plan.planned;
+
+  for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
+    const batch = recipients.slice(i, i + BATCH_SIZE);
+
+    const promises = batch.map(async (recipient) => {
+      if (balance < cost) {
         await db
           .from('broadcast_recipients')
           .update({
             status: 'failed',
             error_message: 'Insufficient wallet balance',
           })
-          .eq('id', rem.recipientRowId);
+          .eq('id', recipient.recipientRowId);
+        return { success: false, recipient, error: 'Insufficient wallet balance' };
       }
-      break;
-    }
 
-    const variants = phoneVariants(recipient.phone);
-    let sentMessageId: string | null = null;
-    let lastError: string | null = null;
-
-    for (const variant of variants) {
-      try {
-        const result = await sendTemplateMessage({
-          phoneNumberId: plan.phoneNumberId,
-          accessToken: plan.accessToken,
-          to: variant,
-          templateName: plan.templateName,
-          language: plan.templateLanguage,
-          template: plan.templateRow ?? undefined,
-          params: recipient.params,
-        });
-        sentMessageId = result.messageId;
-        lastError = null;
-        break;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        lastError = message;
-        // Only a "recipient not allowed" error is worth another variant.
-        if (!isRecipientNotAllowedError(message)) break;
-      }
-    }
-
-    if (sentMessageId) {
-      sentCount++;
       balance -= cost;
 
-      // Update wallet balance in DB
-      await db
-        .from('accounts')
-        .update({ wallet_balance: balance })
-        .eq('id', accountId);
+      const variants = phoneVariants(recipient.phone);
+      let sentMessageId: string | null = null;
+      let lastError: string | null = null;
 
-      // Log wallet transaction
-      await db
-        .from('wallet_transactions')
-        .insert({
-          account_id: accountId,
-          user_id: userId,
-          amount: -cost,
-          type: 'debit',
-          description: `API Broadcast message sent to ${recipient.phone} (Template: ${plan.templateName})`,
-        });
+      for (const variant of variants) {
+        try {
+          const result = await sendTemplateMessage({
+            phoneNumberId: plan.phoneNumberId,
+            accessToken: plan.accessToken,
+            to: variant,
+            templateName: plan.templateName,
+            language: plan.templateLanguage,
+            template: plan.templateRow ?? undefined,
+            params: recipient.params,
+          });
+          sentMessageId = result.messageId;
+          lastError = null;
+          break;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          lastError = message;
+          if (!isRecipientNotAllowedError(message)) break;
+        }
+      }
 
-      await db
+      if (sentMessageId) {
+        return { success: true, recipient, messageId: sentMessageId };
+      } else {
+        balance += cost;
+        return { success: false, recipient, error: lastError || 'Unknown error' };
+      }
+    });
+
+    const results = await Promise.all(promises);
+
+    const successful = results.filter((r) => r.success && r.messageId);
+    const failed = results.filter((r) => !r.success);
+
+    sentCount += successful.length;
+
+    const successUpdates = successful.map((s) => {
+      return db
         .from('broadcast_recipients')
         .update({
           status: 'sent',
           sent_at: new Date().toISOString(),
-          whatsapp_message_id: sentMessageId,
+          whatsapp_message_id: s.messageId,
           error_message: null,
         })
-        .eq('id', recipient.recipientRowId);
-    } else {
-      await db
+        .eq('id', s.recipient.recipientRowId);
+    });
+
+    const failUpdates = failed.map((f) => {
+      return db
         .from('broadcast_recipients')
         .update({
           status: 'failed',
-          error_message: lastError || 'Unknown error',
+          error_message: f.error || 'Unknown error',
         })
-        .eq('id', recipient.recipientRowId);
+        .eq('id', f.recipient.recipientRowId);
+    });
+
+    await Promise.all([...successUpdates, ...failUpdates]);
+
+    if (successful.length > 0) {
+      const transactions = successful.map((s) => ({
+        account_id: accountId,
+        user_id: userId,
+        amount: -cost,
+        type: 'debit',
+        description: `API Broadcast message sent to ${s.recipient.phone} (Template: ${plan.templateName})`,
+      }));
+
+      await db.from('wallet_transactions').insert(transactions);
+
+      await db
+        .from('accounts')
+        .update({ wallet_balance: balance })
+        .eq('id', accountId);
     }
   }
 
