@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { parseContactCsv } from '@/lib/contacts/parse-contact-csv';
 
-type AudienceType = 'all' | 'tags' | 'custom_field' | 'csv';
+type AudienceType = 'all' | 'tags' | 'manual' | 'custom_field' | 'csv';
 type CustomFieldOperator = 'is' | 'is_not' | 'contains';
 
 interface CustomFieldFilter {
@@ -54,10 +54,10 @@ const audienceOptions: {
     icon: Users,
   },
   {
-    type: 'tags',
-    label: 'Filter by Tags',
-    description: 'Target contacts with specific tags',
-    icon: Tags,
+    type: 'manual',
+    label: 'Copy & Paste',
+    description: 'Type or copy-paste phone numbers manually',
+    icon: FileText,
   },
   {
     type: 'custom_field',
@@ -91,6 +91,18 @@ export function Step2SelectAudience({
   const [loadingFields, setLoadingFields] = useState(false);
   const [estimatedCount, setEstimatedCount] = useState<number | null>(null);
   const [loadingCount, setLoadingCount] = useState(false);
+  const [pastedText, setPastedText] = useState(() =>
+    (audience.csvContacts ?? []).map((c) => c.phone).join('\n')
+  );
+
+  useEffect(() => {
+    if (audience.type === 'manual') {
+      const current = (audience.csvContacts ?? []).map((c) => c.phone).join('\n');
+      if (current !== pastedText) {
+        setPastedText(current);
+      }
+    }
+  }, [audience.csvContacts, audience.type]);
 
   // Tags are used both by the primary "Filter by Tags" audience type
   // AND by the exclude-list below — so always load once on mount.
@@ -138,16 +150,6 @@ export function Step2SelectAudience({
       if (audience.type === 'all') {
         // Handled below — full-table count adjusted by excludes.
       } else if (
-        audience.type === 'tags' &&
-        audience.tagIds &&
-        audience.tagIds.length > 0
-      ) {
-        const { data } = await supabase
-          .from('contact_tags')
-          .select('contact_id')
-          .in('tag_id', audience.tagIds);
-        baseIds = new Set((data ?? []).map((r) => r.contact_id));
-      } else if (
         audience.type === 'custom_field' &&
         audience.customField?.fieldId &&
         audience.customField.value
@@ -163,7 +165,7 @@ export function Step2SelectAudience({
         const { data } = await q;
         baseIds = new Set((data ?? []).map((r) => r.contact_id));
       } else if (
-        audience.type === 'csv' &&
+        (audience.type === 'csv' || audience.type === 'manual') &&
         audience.csvContacts &&
         audience.csvContacts.length > 0
       ) {
@@ -240,11 +242,10 @@ export function Step2SelectAudience({
 
   const isValid =
     audience.type === 'all' ||
-    (audience.type === 'tags' && audience.tagIds && audience.tagIds.length > 0) ||
     (audience.type === 'custom_field' &&
       !!audience.customField?.fieldId &&
       audience.customField.value.length > 0) ||
-    (audience.type === 'csv' &&
+    ((audience.type === 'csv' || audience.type === 'manual') &&
       audience.csvContacts &&
       audience.csvContacts.length > 0);
 
@@ -268,15 +269,15 @@ export function Step2SelectAudience({
                 onUpdate({
                   ...audience,
                   type: option.type,
-                  // Wipe shape fields from other types to avoid stale
-                  // config leaking across selections.
-                  tagIds: option.type === 'tags' ? audience.tagIds : undefined,
+                  tagIds: undefined,
                   customField:
                     option.type === 'custom_field'
                       ? audience.customField
                       : undefined,
                   csvContacts:
-                    option.type === 'csv' ? audience.csvContacts : undefined,
+                    (option.type === 'csv' || option.type === 'manual')
+                      ? audience.csvContacts
+                      : undefined,
                 })
               }
               className={`flex items-start gap-3 rounded-xl border p-4 text-left transition-all ${
@@ -305,39 +306,32 @@ export function Step2SelectAudience({
         })}
       </div>
 
-      {audience.type === 'tags' && (
-        <div className="rounded-xl border border-border bg-card/50 p-4">
-          <p className="mb-3 text-sm font-medium text-foreground">Select Tags</p>
-          {loadingTags ? (
-            <Loader2 className="h-5 w-5 animate-spin text-primary" />
-          ) : tags.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              No tags found. Create tags in Settings.
-            </p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {tags.map((tag) => {
-                const isSelected = audience.tagIds?.includes(tag.id);
-                return (
-                  <button
-                    key={tag.id}
-                    onClick={() => toggleTag(tag.id)}
-                    className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-all ${
-                      isSelected
-                        ? 'border-primary/30 bg-primary/10 text-primary'
-                        : 'border-border bg-muted text-muted-foreground hover:border-border'
-                    }`}
-                  >
-                    <span
-                      className="mr-1.5 h-2 w-2 rounded-full"
-                      style={{ backgroundColor: tag.color }}
-                    />
-                    {tag.name}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+      {audience.type === 'manual' && (
+        <div className="rounded-xl border border-border bg-card/50 p-4 space-y-3 animate-in fade-in-50 duration-200">
+          <p className="text-sm font-medium text-foreground">Copy & Paste Phone Numbers</p>
+          <textarea
+            rows={6}
+            placeholder="Type or paste phone numbers here... (one per line or separated by commas)"
+            value={pastedText}
+            onChange={(e) => {
+              const val = e.target.value;
+              setPastedText(val);
+              const lines = val.split(/[\n,;]/);
+              const parsed = lines
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0)
+                .map((phone) => ({ phone }));
+
+              onUpdate({
+                ...audience,
+                csvContacts: parsed,
+              });
+            }}
+            className="w-full rounded-lg border border-border bg-muted/30 px-3 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary font-mono leading-relaxed"
+          />
+          <p className="text-xs text-muted-foreground leading-normal">
+            Aap ek baar mein multiple phone numbers paste kar sakte hain (separated by newlines, commas, or semicolons). Numbers automatically parse hokar select ho jayenge.
+          </p>
         </div>
       )}
 

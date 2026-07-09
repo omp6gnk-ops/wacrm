@@ -99,7 +99,7 @@ export function Step4ScheduleSend({
 
           const uniqueIds = new Set((contactTags ?? []).map((ct) => ct.contact_id));
           setEstimatedReach(uniqueIds.size);
-        } else if (audience.type === 'csv' && audience.csvContacts) {
+        } else if ((audience.type === 'csv' || audience.type === 'manual') && audience.csvContacts) {
           setEstimatedReach(audience.csvContacts.length);
         } else {
           setEstimatedReach(0);
