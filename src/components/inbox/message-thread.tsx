@@ -173,7 +173,7 @@ export function MessageThread({
   contactPanelOpen,
   onToggleContactPanel,
 }: MessageThreadProps) {
-  const { user, accountId } = useAuth();
+  const { user, accountId, accountRole } = useAuth();
   const [customStatuses, setCustomStatuses] = useState<{ id: string; name: string; color: string }[]>([]);
 
   useEffect(() => {
@@ -853,6 +853,12 @@ export function MessageThread({
     async (agentId: string | null) => {
       if (!conversation) return;
 
+      const isAgentRole = accountRole === 'agent' || accountRole === 'viewer';
+      if (isAgentRole && conversation.assigned_agent_id && conversation.assigned_agent_id !== user?.id) {
+        toast.error("This chat is already assigned to another agent and cannot be reassigned.");
+        return;
+      }
+
       const supabase = createClient();
       const { error } = await supabase
         .from("conversations")
@@ -867,7 +873,7 @@ export function MessageThread({
 
       onAssignChange(conversation.id, agentId);
     },
-    [conversation, onAssignChange],
+    [conversation, onAssignChange, accountRole, user?.id],
   );
 
   // Empty state — same WhatsApp-style doodle background as the active
@@ -899,6 +905,9 @@ export function MessageThread({
   const assignLabel = assignedAgentId
     ? (currentAssignee?.full_name ?? "Assigned")
     : "Assign";
+
+  const isAgentRole = accountRole === 'agent' || accountRole === 'viewer';
+  const disableAssign = isAgentRole && assignedAgentId && assignedAgentId !== user?.id;
 
   return (
     // `min-w-0` is load-bearing: the page already puts min-w-0 on the
@@ -1060,8 +1069,9 @@ export function MessageThread({
           {/* Assign dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger
+              disabled={!!disableAssign}
               className={cn(
-                "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
+                "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted disabled:opacity-60 disabled:cursor-not-allowed",
                 assignedAgentId ? "text-primary" : "text-muted-foreground"
               )}
             >

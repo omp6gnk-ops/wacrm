@@ -68,6 +68,10 @@ export function ConversationList({
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
 
+  // Teammates / Agents list and active filter state
+  const [profiles, setProfiles] = useState<{ user_id: string; full_name: string | null }[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+
   // Keep the latest callback in a ref so the fetch effect below can
   // have a stable, empty-dep identity. Previously the fetch useCallback
   // depended on `onConversationsLoaded`, which depends on the parent's
@@ -85,9 +89,19 @@ export function ConversationList({
 
   const fetchConversations = useCallback(async () => {
     const supabase = createClient();
-    const { data, error } = await supabase
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+    let query = supabase
       .from("conversations")
-      .select(CONVERSATION_SELECT)
+      .select(CONVERSATION_SELECT);
+
+    if (showExpiredOnly) {
+      query = query.lte("last_customer_message_at", twentyFourHoursAgo);
+    } else {
+      query = query.or(`last_customer_message_at.gt.${twentyFourHoursAgo},last_customer_message_at.is.null`);
+    }
+
+    const { data, error } = await query
       .order("last_message_at", { ascending: false })
       .limit(250);
 
@@ -97,7 +111,7 @@ export function ConversationList({
       loadCallbackRef.current?.(normalizeConversations(data ?? []));
     }
     setLoading(false);
-  }, []);
+  }, [showExpiredOnly]);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,6 +140,10 @@ export function ConversationList({
     (async () => {
       const { data } = await supabase.from("conversation_custom_statuses").select("id, name, color").order("name");
       if (!cancelled && data) setCustomStatuses(data);
+    })();
+    (async () => {
+      const { data } = await supabase.from("profiles").select("user_id, full_name").order("full_name");
+      if (!cancelled && data) setProfiles(data);
     })();
     return () => {
       cancelled = true;
@@ -169,6 +187,8 @@ export function ConversationList({
       result = result.filter((c) => c.assigned_agent_id === currentUserId);
     } else if (assignmentFilter === 'unassigned') {
       result = result.filter((c) => !c.assigned_agent_id);
+    } else if (selectedAgentId !== null) {
+      result = result.filter((c) => c.assigned_agent_id === selectedAgentId);
     }
 
     if (filter === "unread") {
@@ -206,7 +226,7 @@ export function ConversationList({
     });
 
     return result;
-  }, [conversations, assignmentFilter, currentUserId, filter, search, selectedTagIds, selectedCompany, showExpiredOnly]);
+  }, [conversations, assignmentFilter, currentUserId, filter, search, selectedTagIds, selectedCompany, showExpiredOnly, selectedAgentId]);
 
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
@@ -354,6 +374,51 @@ export function ConversationList({
                       <span className="truncate">{t.name}</span>
                     </span>
                   </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+
+          {/* Assignee Filter Dropdown */}
+          {profiles.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                className={cn(
+                  "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
+                  selectedAgentId !== null
+                    ? "text-primary"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {selectedAgentId
+                  ? (profiles.find((p) => p.user_id === selectedAgentId)?.full_name ?? "Assigned")
+                  : "Assignee"}
+                <ChevronDown className="h-3 w-3" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                className="max-h-64 w-56 border-border bg-popover overflow-y-auto"
+              >
+                <DropdownMenuItem
+                  onClick={() => setSelectedAgentId(null)}
+                  className={cn(
+                    "text-sm font-medium",
+                    selectedAgentId === null ? "text-primary" : "text-popover-foreground"
+                  )}
+                >
+                  All Assignees
+                </DropdownMenuItem>
+                {profiles.map((p) => (
+                  <DropdownMenuItem
+                    key={p.user_id}
+                    onClick={() => setSelectedAgentId(p.user_id)}
+                    className={cn(
+                      "text-sm",
+                      selectedAgentId === p.user_id ? "text-primary" : "text-popover-foreground"
+                    )}
+                  >
+                    {p.full_name ?? "Unknown Teammate"}
+                  </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
