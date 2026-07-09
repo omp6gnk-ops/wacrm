@@ -198,8 +198,15 @@ export function ConversationList({
       });
     }
 
+    // Sort by last_message_at descending so the most recent chats are always at the top
+    result = [...result].sort((a, b) => {
+      const timeA = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+      const timeB = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+      return timeB - timeA;
+    });
+
     return result;
-  }, [conversations, assignmentFilter, currentUserId, filter, search, selectedTagIds, selectedCompany]);
+  }, [conversations, assignmentFilter, currentUserId, filter, search, selectedTagIds, selectedCompany, showExpiredOnly]);
 
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
