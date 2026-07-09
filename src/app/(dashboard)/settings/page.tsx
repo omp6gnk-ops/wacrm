@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, useEffect, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 import { useAuth } from '@/hooks/use-auth';
@@ -31,11 +31,15 @@ export default function SettingsPage() {
   const { defaultCurrency, canEditSettings } = useAuth();
   const { mode } = useTheme();
 
-  // The URL (`?tab=`) is the single source of truth for the active
-  // section — deep-linkable, and it keeps the existing links in the
-  // app sidebar/header working. Legacy tab values (tags, custom-fields)
-  // resolve onto their new home; unknown/empty → the Overview landing.
-  const section = resolveSection(searchParams.get('tab'));
+  const urlSection = resolveSection(searchParams.get('tab'));
+  const [localSection, setLocalSection] = useState<SettingsSection | null>(null);
+
+  // Sync local state when url parameter changes
+  useEffect(() => {
+    setLocalSection(urlSection);
+  }, [urlSection]);
+
+  const section = localSection ?? urlSection;
 
   // Gate workspace sections for admins only
   const activeSection =
@@ -44,6 +48,7 @@ export default function SettingsPage() {
       : section;
 
   const go = (next: SettingsSection) => {
+    setLocalSection(next);
     const params = new URLSearchParams(searchParams.toString());
     params.set('tab', next);
     router.replace(`/settings?${params.toString()}`, { scroll: false });
