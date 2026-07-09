@@ -87,6 +87,7 @@ function aiConfig(overrides: Partial<AiConfig> = {}): AiConfig {
     isActive: true,
     autoReplyEnabled: true,
     autoReplyMaxPerConversation: 3,
+    aiTakeoverMinutes: 5,
     embeddingsApiKey: null,
     ...overrides,
   }
@@ -97,6 +98,7 @@ beforeEach(() => {
     assigned_agent_id: null,
     ai_autoreply_disabled: false,
     ai_reply_count: 0,
+    has_agent_replied: false,
   }
   h.state.autoResponders = []
   h.state.recentAgentMessages = []
@@ -160,22 +162,36 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.engineSendText).not.toHaveBeenCalled()
   })
 
-  it('sends when a human agent is assigned but inactive (no recent messages)', async () => {
+  it('sends INSTANTLY when agent assigned but never replied (Tier 1)', async () => {
     h.state.conv = {
       assigned_agent_id: 'agent-9',
       ai_autoreply_disabled: false,
       ai_reply_count: 0,
+      has_agent_replied: false,
     }
-    h.state.recentAgentMessages = []
+    // No messages query needed — Tier 1 skips the recency check.
     await dispatchInboundToAiReply(ARGS)
     expect(h.engineSendText).toHaveBeenCalled()
   })
 
-  it('skips when a human agent is actively chatting (recent message)', async () => {
+  it('sends when agent replied before but is now inactive (Tier 2)', async () => {
     h.state.conv = {
       assigned_agent_id: 'agent-9',
       ai_autoreply_disabled: false,
       ai_reply_count: 0,
+      has_agent_replied: true,
+    }
+    h.state.recentAgentMessages = [] // no recent agent messages
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).toHaveBeenCalled()
+  })
+
+  it('skips when agent is actively chatting — Tier 2 recent message', async () => {
+    h.state.conv = {
+      assigned_agent_id: 'agent-9',
+      ai_autoreply_disabled: false,
+      ai_reply_count: 0,
+      has_agent_replied: true,
     }
     h.state.recentAgentMessages = [{ id: 'msg-1' }]
     await dispatchInboundToAiReply(ARGS)

@@ -18,14 +18,6 @@ interface DispatchArgs {
 }
 
 /**
- * How many minutes of inactivity from a human agent before AI resumes
- * replying on an assigned conversation. If an agent sent a message
- * within this window, the AI stands down to avoid double-texting.
- * Outside this window (e.g. night-time, holidays), AI takes over.
- */
-const AGENT_ACTIVE_WINDOW_MINUTES = 5
-
-/**
  * AI auto-reply for a freshly-arrived inbound message.
  *
  * Invoked from the WhatsApp webhook's `after()` block, only when no
@@ -35,11 +27,16 @@ const AGENT_ACTIVE_WINDOW_MINUTES = 5
  *
  * Eligibility gates (any → silent no-op):
  *   - AI off / auto-reply disabled for the account
- *   - a human agent is ACTIVELY chatting (sent a message in the last
- *     5 minutes) — they own the thread right now
+ *   - a human agent is ACTIVELY chatting (sent a message within the
+ *     configured takeover window) — they own the thread right now
  *   - auto-reply was disabled for this conversation (prior handoff)
  *   - the per-conversation reply cap is reached
  *   - there's nothing to reply to
+ *
+ * Smart agent-activity gate:
+ *   - If agent never replied (first customer message) → AI replies INSTANTLY
+ *   - If agent replied before but is now inactive → AI waits the
+ *     configured `aiTakeoverMinutes` before stepping in
  *
  * The 24h WhatsApp session window is inherently open here — we're
  * reacting to a customer message that just landed — so no separate
@@ -75,35 +72,61 @@ export async function dispatchInboundToAiReply(
 
     const { data: conv, error: convErr } = await db
       .from('conversations')
-      .select('assigned_agent_id, ai_autoreply_disabled, ai_reply_count')
+      .select('assigned_agent_id, ai_autoreply_disabled, ai_reply_count, has_agent_replied')
       .eq('id', conversationId)
       .maybeSingle()
     if (convErr || !conv) return
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
 
     // Smart agent-activity gate: instead of blocking AI entirely when a
-    // chat is assigned, we check whether a human agent is ACTIVELY
-    // chatting right now (sent a message in the last N minutes). This
-    // allows AI to handle assigned chats when agents are offline (night,
-    // holidays, busy) while still yielding when an agent is live.
+    // chat is assigned, we use a two-tier approach:
+    //
+    // Tier 1 — Agent NEVER replied (first customer contact / broadcast
+    //   reply): AI responds INSTANTLY. The customer shouldn't wait.
+    //
+    // Tier 2 — Agent HAS replied before but is now inactive: AI waits
+    //   for `aiTakeoverMinutes` (admin-configured, default 5) before
+    //   stepping in. This prevents double-texting when an agent just
+    //   sent a message, but hands the chat to AI when agents are
+    //   offline (nights, holidays, breaks).
     if (conv.assigned_agent_id) {
-      const cutoff = new Date(
-        Date.now() - AGENT_ACTIVE_WINDOW_MINUTES * 60 * 1000,
-      ).toISOString()
+      const agentHasReplied = conv.has_agent_replied === true
 
-      const { data: recentAgentMsgs } = await db
-        .from('messages')
-        .select('id')
-        .eq('conversation_id', conversationId)
-        .eq('sender_type', 'agent')
-        .gte('created_at', cutoff)
-        .limit(1)
+      if (agentHasReplied) {
+        // Tier 2: agent replied before — check recency window.
+        const takeoverMinutes = config.aiTakeoverMinutes ?? 5
+        if (takeoverMinutes > 0) {
+          const cutoff = new Date(
+            Date.now() - takeoverMinutes * 60 * 1000,
+          ).toISOString()
 
-      if (recentAgentMsgs && recentAgentMsgs.length > 0) {
-        // Agent is actively chatting — stand down.
-        return
+          const { data: recentAgentMsgs } = await db
+            .from('messages')
+            .select('id')
+            .eq('conversation_id', conversationId)
+            .eq('sender_type', 'agent')
+            .gte('created_at', cutoff)
+            .limit(1)
+
+          if (recentAgentMsgs && recentAgentMsgs.length > 0) {
+            // Agent is actively chatting — stand down.
+            return
+          }
+        }
+        // Agent replied before but is now inactive — AI takes over.
+        // Reset the AI reply count so the bot gets a fresh quota for
+        // this new "session" (avoids the cap being exhausted from a
+        // much earlier AI interaction).
+        if (conv.ai_reply_count > 0) {
+          await db
+            .from('conversations')
+            .update({ ai_reply_count: 0 })
+            .eq('id', conversationId)
+          conv.ai_reply_count = 0
+        }
       }
-      // Agent is assigned but inactive — AI takes over.
+      // Tier 1 (agentHasReplied === false): fall through — AI replies
+      // instantly, no waiting.
     }
 
     // Cheap early-out; the authoritative cap check is the atomic claim

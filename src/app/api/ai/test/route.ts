@@ -71,6 +71,7 @@ export async function POST(request: Request) {
         isActive: true,
         autoReplyEnabled: false,
         autoReplyMaxPerConversation: 3,
+        aiTakeoverMinutes: 5,
         embeddingsApiKey: null,
       })
     } catch (err) {

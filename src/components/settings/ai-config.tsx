@@ -64,6 +64,7 @@ export function AiConfig() {
   const [isActive, setIsActive] = useState(false);
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
   const [maxPerConversation, setMaxPerConversation] = useState(3);
+  const [aiTakeoverMinutes, setAiTakeoverMinutes] = useState(5);
 
   // Guard keyed on the account (not a bare boolean) so an in-place
   // account switch — ownership transfer, multi-account membership —
@@ -88,6 +89,7 @@ export function AiConfig() {
         setIsActive(data.is_active);
         setAutoReplyEnabled(data.auto_reply_enabled);
         setMaxPerConversation(data.auto_reply_max_per_conversation ?? 3);
+        setAiTakeoverMinutes(data.ai_takeover_minutes ?? 5);
         setHasStoredKey(Boolean(data.has_key));
         setApiKey(data.has_key ? MASKED_KEY : '');
         setKeyEdited(false);
@@ -134,6 +136,7 @@ export function AiConfig() {
     is_active: isActive,
     auto_reply_enabled: autoReplyEnabled,
     auto_reply_max_per_conversation: maxPerConversation,
+    ai_takeover_minutes: aiTakeoverMinutes,
   });
 
   const handleTest = async () => {
@@ -410,9 +413,10 @@ export function AiConfig() {
                   Auto-reply to inbound messages
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  The bot answers new inbound messages automatically (only when
-                  no flow handles them and no agent is assigned). Hands off to a
-                  human when it can’t help.
+                  The bot answers new inbound messages automatically. For
+                  assigned chats where the agent hasn&apos;t replied yet, AI
+                  responds instantly. If the agent replied before but is now
+                  inactive, AI waits for the configured takeover time below.
                 </p>
               </div>
               <Switch
@@ -438,6 +442,30 @@ export function AiConfig() {
                 onChange={(e) =>
                   setMaxPerConversation(
                     Math.min(20, Math.max(1, Number(e.target.value) || 1)),
+                  )
+                }
+                disabled={disabled || !autoReplyEnabled}
+                className="w-20"
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <Label htmlFor="ai-takeover">Agent inactivity takeover (minutes)</Label>
+                <p className="text-xs text-muted-foreground">
+                  When an agent is assigned but hasn&apos;t replied within this time,
+                  AI takes over. Set 0 for instant AI on all chats.
+                </p>
+              </div>
+              <Input
+                id="ai-takeover"
+                type="number"
+                min={0}
+                max={60}
+                value={aiTakeoverMinutes}
+                onChange={(e) =>
+                  setAiTakeoverMinutes(
+                    Math.min(60, Math.max(0, Number(e.target.value) || 0)),
                   )
                 }
                 disabled={disabled || !autoReplyEnabled}
