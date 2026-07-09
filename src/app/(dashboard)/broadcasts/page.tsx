@@ -64,8 +64,19 @@ export default function BroadcastsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const pageSize = 10;
+
   // Used to kick off polling only while something is actively sending.
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Sync ref for polling functions
+  const currentPageRef = useRef(currentPage);
+  useEffect(() => {
+    currentPageRef.current = currentPage;
+  }, [currentPage]);
 
   async function handleDelete(e: React.MouseEvent, id: string) {
     e.stopPropagation();
@@ -75,7 +86,7 @@ export default function BroadcastsPage() {
       const { error } = await supabase.from('broadcasts').delete().eq('id', id);
       if (error) throw error;
       toast.success('Broadcast deleted');
-      fetchBroadcasts();
+      fetchBroadcasts(currentPage);
     } catch (err) {
       toast.error('Failed to delete broadcast');
     }
@@ -84,7 +95,7 @@ export default function BroadcastsPage() {
   async function handleRetry(e: React.MouseEvent, id: string) {
     e.stopPropagation();
     try {
-      toast.loading('Retrying broadcast...', { id: 'retry-broadcast' });
+      toast.loading('Retrying/resuming broadcast...', { id: 'retry-broadcast' });
       const res = await fetch('/api/whatsapp/broadcast', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -92,26 +103,31 @@ export default function BroadcastsPage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Failed to retry broadcast');
+        throw new Error(data.error || 'Failed to retry/resume broadcast');
       }
-      toast.success('Broadcast retried in background', { id: 'retry-broadcast' });
-      fetchBroadcasts();
+      toast.success('Broadcast retried/resumed in background', { id: 'retry-broadcast' });
+      fetchBroadcasts(currentPage);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to retry broadcast';
+      const msg = err instanceof Error ? err.message : 'Failed to retry/resume broadcast';
       toast.error(msg, { id: 'retry-broadcast' });
     }
   }
 
-  async function fetchBroadcasts() {
+  async function fetchBroadcasts(page = currentPage) {
     try {
       const supabase = createClient();
-      const { data, error: fetchError } = await supabase
+      const start = (page - 1) * pageSize;
+      const end = start + pageSize - 1;
+
+      const { data, count, error: fetchError } = await supabase
         .from('broadcasts')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .select('*', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(start, end);
 
       if (fetchError) throw fetchError;
       setBroadcasts(data ?? []);
+      setTotalCount(count ?? 0);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load broadcasts');
     } finally {
@@ -120,8 +136,8 @@ export default function BroadcastsPage() {
   }
 
   useEffect(() => {
-    fetchBroadcasts();
-  }, []);
+    fetchBroadcasts(currentPage);
+  }, [currentPage]);
 
   const anySending = useMemo(
     () => broadcasts.some((b) => b.status === 'sending'),
@@ -131,7 +147,9 @@ export default function BroadcastsPage() {
   useEffect(() => {
     function startPolling() {
       if (pollTimer.current) return;
-      pollTimer.current = setInterval(fetchBroadcasts, POLL_INTERVAL_MS);
+      pollTimer.current = setInterval(() => {
+        fetchBroadcasts(currentPageRef.current);
+      }, POLL_INTERVAL_MS);
     }
     function stopPolling() {
       if (!pollTimer.current) return;
@@ -147,7 +165,7 @@ export default function BroadcastsPage() {
       if (document.visibilityState === 'hidden') {
         stopPolling();
       } else {
-        fetchBroadcasts();
+        fetchBroadcasts(currentPageRef.current);
         startPolling();
       }
     }
@@ -326,13 +344,13 @@ export default function BroadcastsPage() {
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
                         )}
-                        {broadcast.status === 'failed' && (
+                        {(broadcast.status === 'failed' || broadcast.status === 'sending') && (
                           <Button
                             variant="ghost"
                             size="icon"
                             className="h-7 w-7 text-muted-foreground hover:text-foreground"
                             onClick={(e) => handleRetry(e, broadcast.id)}
-                            title="Retry Sending"
+                            title={broadcast.status === 'sending' ? 'Resume/Retry Sending' : 'Retry Sending'}
                           >
                             <RefreshCw className="h-3.5 w-3.5" />
                           </Button>
@@ -353,6 +371,63 @@ export default function BroadcastsPage() {
               })}
             </TableBody>
           </Table>
+
+          {/* Pagination Controls */}
+          {totalCount > pageSize && (
+            <div className="flex items-center justify-between border-t border-border px-4 py-3 sm:px-6">
+              <div className="flex flex-1 justify-between sm:hidden">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+                  disabled={currentPage === 1}
+                  className="border-border text-xs text-foreground"
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage((p) => Math.min(p + 1, Math.ceil(totalCount / pageSize)))}
+                  disabled={currentPage >= Math.ceil(totalCount / pageSize)}
+                  className="border-border text-xs text-foreground"
+                >
+                  Next
+                </Button>
+              </div>
+              <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-xs text-muted-foreground">
+                    Showing <span className="font-semibold text-foreground">{(currentPage - 1) * pageSize + 1}</span> to{' '}
+                    <span className="font-semibold text-foreground">
+                      {Math.min(currentPage * pageSize, totalCount)}
+                    </span>{' '}
+                    of <span className="font-semibold text-foreground">{totalCount}</span> broadcasts
+                  </p>
+                </div>
+                <div className="flex gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+                    disabled={currentPage === 1}
+                    className="h-8 border-border text-xs px-3 text-foreground"
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage((p) => Math.min(p + 1, Math.ceil(totalCount / pageSize)))}
+                    disabled={currentPage >= Math.ceil(totalCount / pageSize)}
+                    className="h-8 border-border text-xs px-3 text-foreground"
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

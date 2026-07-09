@@ -130,9 +130,9 @@ export function MessageComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const { accountId } = useAuth();
-  const [cannedReplies, setCannedReplies] = useState<{ id: string; shortcut: string; message_text: string }[]>([]);
+  const [cannedReplies, setCannedReplies] = useState<{ id: string; shortcut: string; message_text: string; media_url?: string | null; media_type?: string | null }[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [suggestions, setSuggestions] = useState<{ id: string; shortcut: string; message_text: string }[]>([]);
+  const [suggestions, setSuggestions] = useState<{ id: string; shortcut: string; message_text: string; media_url?: string | null; media_type?: string | null }[]>([]);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
 
   useEffect(() => {
@@ -141,7 +141,7 @@ export function MessageComposer({
       const supabase = createClient();
       const { data } = await supabase
         .from('canned_responses')
-        .select('id, shortcut, message_text')
+        .select('id, shortcut, message_text, media_url, media_type')
         .eq('account_id', accountId)
         .order('shortcut');
       setCannedReplies(data ?? []);
@@ -230,7 +230,7 @@ export function MessageComposer({
     }
   }, [text, sending, sessionExpired, onSend, replyTo?.id]);
 
-  const applyCannedReply = useCallback((reply: { shortcut: string; message_text: string }) => {
+  const applyCannedReply = useCallback((reply: { shortcut: string; message_text: string; media_url?: string | null; media_type?: string | null }) => {
     if (!textareaRef.current) return;
     const el = textareaRef.current;
     const cursorPosition = el.selectionStart ?? text.length;
@@ -239,16 +239,39 @@ export function MessageComposer({
     if (lastSlashIndex === -1) return;
 
     const textAfterCursor = text.slice(cursorPosition);
-    const newText = textBeforeCursor.slice(0, lastSlashIndex) + reply.message_text + textAfterCursor;
-    setText(newText);
     setShowSuggestions(false);
 
-    setTimeout(() => {
-      el.focus();
-      const newCursorPos = lastSlashIndex + reply.message_text.length;
-      el.setSelectionRange(newCursorPos, newCursorPos);
-      adjustHeight();
-    }, 10);
+    if (reply.media_url && reply.media_type) {
+      // Stage media attachment as draft in composer, with caption set to reply text
+      setDraft({
+        kind: reply.media_type as any,
+        mediaUrl: reply.media_url,
+        path: '',
+        filename: reply.media_url.split('/').pop() || 'file',
+        caption: reply.message_text,
+      });
+
+      // Clear the slash trigger command from the input
+      const newText = textBeforeCursor.slice(0, lastSlashIndex) + textAfterCursor;
+      setText(newText);
+
+      setTimeout(() => {
+        el.focus();
+        el.setSelectionRange(lastSlashIndex, lastSlashIndex);
+        adjustHeight();
+      }, 10);
+    } else {
+      // Regular text quick reply replacement
+      const newText = textBeforeCursor.slice(0, lastSlashIndex) + reply.message_text + textAfterCursor;
+      setText(newText);
+
+      setTimeout(() => {
+        el.focus();
+        const newCursorPos = lastSlashIndex + reply.message_text.length;
+        el.setSelectionRange(newCursorPos, newCursorPos);
+        adjustHeight();
+      }, 10);
+    }
   }, [text, adjustHeight]);
 
   const handleKeyDown = useCallback(

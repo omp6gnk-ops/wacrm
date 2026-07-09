@@ -28,6 +28,11 @@ export function WalletPanel() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const pageSize = 10;
+
   // Input states for adding tokens
   const [amountInput, setAmountInput] = useState('');
   const [descInput, setDescInput] = useState('');
@@ -45,16 +50,19 @@ export function WalletPanel() {
       if (acctErr) throw acctErr;
       setBalance(Number(acct?.wallet_balance ?? 0));
 
-      // 2. Fetch last 50 transactions
-      const { data: txs, error: txsErr } = await supabase
+      // 2. Fetch paginated transactions
+      const start = (currentPage - 1) * pageSize;
+      const end = start + pageSize - 1;
+      const { data: txs, count, error: txsErr } = await supabase
         .from('wallet_transactions')
-        .select('id, amount, type, description, created_at')
+        .select('id, amount, type, description, created_at', { count: 'exact' })
         .eq('account_id', accountId)
         .order('created_at', { ascending: false })
-        .limit(50);
+        .range(start, end);
 
       if (txsErr) throw txsErr;
       setTransactions(txs ?? []);
+      setTotalCount(count ?? 0);
     } catch (err: any) {
       console.error('Failed to load wallet data:', err);
       toast.error('Failed to load wallet data');
@@ -65,7 +73,7 @@ export function WalletPanel() {
 
   useEffect(() => {
     loadWalletData();
-  }, [accountId]);
+  }, [accountId, currentPage]);
 
   async function handleTransaction(actionType: 'credit' | 'debit') {
     const amt = parseFloat(amountInput);
@@ -267,6 +275,63 @@ export function WalletPanel() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Pagination Controls */}
+        {totalCount > pageSize && (
+          <div className="flex items-center justify-between border-t border-border pt-4 mt-2">
+            <div className="flex flex-1 justify-between sm:hidden">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+                disabled={currentPage === 1}
+                className="border-border text-[10px] h-7 px-2 text-foreground"
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage((p) => Math.min(p + 1, Math.ceil(totalCount / pageSize)))}
+                disabled={currentPage >= Math.ceil(totalCount / pageSize)}
+                className="border-border text-[10px] h-7 px-2 text-foreground"
+              >
+                Next
+              </Button>
+            </div>
+            <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+              <div>
+                <p className="text-[11px] text-muted-foreground">
+                  Showing <span className="font-semibold text-foreground">{(currentPage - 1) * pageSize + 1}</span> to{' '}
+                  <span className="font-semibold text-foreground">
+                    {Math.min(currentPage * pageSize, totalCount)}
+                  </span>{' '}
+                  of <span className="font-semibold text-foreground">{totalCount}</span> transactions
+                </p>
+              </div>
+              <div className="flex gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+                  disabled={currentPage === 1}
+                  className="h-7 border-border text-[11px] px-2.5 text-foreground"
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage((p) => Math.min(p + 1, Math.ceil(totalCount / pageSize)))}
+                  disabled={currentPage >= Math.ceil(totalCount / pageSize)}
+                  className="h-7 border-border text-[11px] px-2.5 text-foreground"
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
           </div>
         )}
       </Card>
