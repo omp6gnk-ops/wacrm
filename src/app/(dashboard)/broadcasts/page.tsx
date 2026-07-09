@@ -13,10 +13,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Radio, Plus, Loader2 } from 'lucide-react';
+import { Radio, Plus, Loader2, Pencil, RefreshCw, Trash2 } from 'lucide-react';
 import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { getBroadcastStatus } from '@/lib/broadcast-status';
+import { toast } from 'sonner';
 
 /**
  * Poll cadence while any broadcast is sending. Kept modest so we don't
@@ -65,6 +66,41 @@ export default function BroadcastsPage() {
 
   // Used to kick off polling only while something is actively sending.
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  async function handleDelete(e: React.MouseEvent, id: string) {
+    e.stopPropagation();
+    if (!confirm('Are you sure you want to delete this broadcast?')) return;
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.from('broadcasts').delete().eq('id', id);
+      if (error) throw error;
+      toast.success('Broadcast deleted');
+      fetchBroadcasts();
+    } catch (err) {
+      toast.error('Failed to delete broadcast');
+    }
+  }
+
+  async function handleRetry(e: React.MouseEvent, id: string) {
+    e.stopPropagation();
+    try {
+      toast.loading('Retrying broadcast...', { id: 'retry-broadcast' });
+      const res = await fetch('/api/whatsapp/broadcast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ broadcastId: id }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to retry broadcast');
+      }
+      toast.success('Broadcast retried in background', { id: 'retry-broadcast' });
+      fetchBroadcasts();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to retry broadcast';
+      toast.error(msg, { id: 'retry-broadcast' });
+    }
+  }
 
   async function fetchBroadcasts() {
     try {
@@ -226,6 +262,7 @@ export default function BroadcastsPage() {
                 <TableHead className="hidden text-muted-foreground lg:table-cell">Read</TableHead>
                 <TableHead className="text-muted-foreground">Status</TableHead>
                 <TableHead className="hidden text-muted-foreground sm:table-cell">Date</TableHead>
+                <TableHead className="text-right text-muted-foreground">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -275,6 +312,41 @@ export default function BroadcastsPage() {
                     </TableCell>
                     <TableCell className="hidden text-muted-foreground sm:table-cell">
                       {new Date(broadcast.created_at).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-1">
+                        {broadcast.status === 'draft' && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                            onClick={() => router.push(`/broadcasts/new?draft=${broadcast.id}`)}
+                            title="Resume Draft"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {broadcast.status === 'failed' && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                            onClick={(e) => handleRetry(e, broadcast.id)}
+                            title="Retry Sending"
+                          >
+                            <RefreshCw className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-red-400 hover:text-red-350 hover:bg-red-500/10"
+                          onClick={(e) => handleDelete(e, broadcast.id)}
+                          title="Delete Broadcast"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 );

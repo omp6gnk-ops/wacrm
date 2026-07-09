@@ -43,7 +43,6 @@ interface Step4Props {
   onSaveDraft?: () => void;
   onBack: () => void;
   isProcessing: boolean;
-  progress: number;
   assignedAgentId: string | null;
   onAssignedAgentChange: (agentId: string | null) => void;
 }
@@ -57,7 +56,6 @@ export function Step4ScheduleSend({
   onSaveDraft,
   onBack,
   isProcessing,
-  progress,
   assignedAgentId,
   onAssignedAgentChange,
 }: Step4Props) {
@@ -222,18 +220,9 @@ export function Step4ScheduleSend({
       {/* Processing overlay */}
       {isProcessing && (
         <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              <p className="text-sm font-medium text-foreground">Sending broadcast...</p>
-            </div>
-            <span className="text-xs font-medium text-primary">{progress}%</span>
-          </div>
-          <div className="h-1.5 w-full rounded-full bg-muted">
-            <div
-              className="h-1.5 rounded-full bg-primary transition-all duration-300"
-              style={{ width: `${progress}%` }}
-            />
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <p className="text-sm font-medium text-foreground">Queuing broadcast in background...</p>
           </div>
         </div>
       )}

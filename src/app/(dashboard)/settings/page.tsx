@@ -18,6 +18,7 @@ import { MembersTab } from '@/components/settings/members-tab';
 import { WalletPanel } from '@/components/settings/wallet-panel';
 import { CannedPanel } from '@/components/settings/canned-panel';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
+import { IntegrationsPanel } from '@/components/settings/integrations-panel';
 import {
   resolveSection,
   SECTION_META,
@@ -72,6 +73,7 @@ export default function SettingsPage() {
     wallet: <WalletPanel />,
     canned: <CannedPanel />,
     api: <ApiKeysSettings />,
+    integrations: <IntegrationsPanel />,
   };
 
   return (

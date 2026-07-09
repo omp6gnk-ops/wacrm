@@ -8,7 +8,7 @@ import {
   normalizeConversations,
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
-import type { Conversation, ConversationStatus, Tag } from "@/types";
+import type { Conversation, Tag } from "@/types";
 import { Search, ChevronDown, X, UserCircle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Input } from "@/components/ui/input";
@@ -35,23 +35,10 @@ interface ConversationListProps {
   resyncToken?: number;
   currentUserId?: string | null;
   accountRole?: string | null;
+  showExpiredOnly?: boolean;
 }
 
-const STATUS_COLORS: Record<ConversationStatus, string> = {
-  open: "bg-primary",
-  pending: "bg-amber-500",
-  closed: "bg-muted-foreground",
-};
-
-type InboxFilter = ConversationStatus | "all" | "unread";
-
-const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = [
-  { label: "All", value: "all" },
-  { label: "Unread", value: "unread" },
-  { label: "Open", value: "open" },
-  { label: "Pending", value: "pending" },
-  { label: "Closed", value: "closed" },
-];
+type InboxFilter = "all" | "unread" | string;
 
 type AssignmentFilter = 'all_chats' | 'my_chats' | 'unassigned';
 
@@ -63,6 +50,7 @@ export function ConversationList({
   resyncToken = 0,
   currentUserId,
   accountRole,
+  showExpiredOnly = false,
 }: ConversationListProps) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InboxFilter>("all");
@@ -100,7 +88,8 @@ export function ConversationList({
     const { data, error } = await supabase
       .from("conversations")
       .select(CONVERSATION_SELECT)
-      .order("last_message_at", { ascending: false });
+      .order("last_message_at", { ascending: false })
+      .limit(250);
 
     if (error) {
       console.error("[conversation-list] fetch error:", error);
@@ -164,6 +153,18 @@ export function ConversationList({
   const filtered = useMemo(() => {
     let result = conversations;
 
+    // Filter by session expiry
+    const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
+    result = result.filter((c) => {
+      if (showExpiredOnly) {
+        if (!c.last_customer_message_at) return false;
+        return new Date(c.last_customer_message_at).getTime() <= twentyFourHoursAgo;
+      } else {
+        if (!c.last_customer_message_at) return true;
+        return new Date(c.last_customer_message_at).getTime() > twentyFourHoursAgo;
+      }
+    });
+
     if (assignmentFilter === 'my_chats' && currentUserId) {
       result = result.filter((c) => c.assigned_agent_id === currentUserId);
     } else if (assignmentFilter === 'unassigned') {
@@ -173,7 +174,8 @@ export function ConversationList({
     if (filter === "unread") {
       result = result.filter((c) => c.unread_count > 0);
     } else if (filter !== "all") {
-      result = result.filter((c) => c.status === filter);
+      // Filter by custom_status_id (lead status)
+      result = result.filter((c) => c.custom_status_id === filter);
     }
 
     // Contact-based filters (tags via OR logic, exact company match).
@@ -226,7 +228,13 @@ export function ConversationList({
     [onSelect]
   );
 
-  const activeFilter = FILTER_OPTIONS.find((o) => o.value === filter);
+  const filterOptions: { label: string; value: InboxFilter; color?: string }[] = useMemo(() => [
+    { label: "All", value: "all" },
+    { label: "Unread", value: "unread" },
+    ...customStatuses.map((s) => ({ label: s.name, value: s.id, color: s.color })),
+  ], [customStatuses]);
+
+  const activeFilter = filterOptions.find((o) => o.value === filter);
 
   return (
     // w-full on mobile so the list occupies the whole viewport when it's
@@ -277,7 +285,7 @@ export function ConversationList({
               align="start"
               className="border-border bg-popover"
             >
-              {FILTER_OPTIONS.map((opt) => (
+              {filterOptions.map((opt) => (
                 <DropdownMenuItem
                   key={opt.value}
                   onClick={() => setFilter(opt.value)}
@@ -288,7 +296,15 @@ export function ConversationList({
                       : "text-popover-foreground"
                   )}
                 >
-                  {opt.label}
+                  <span className="flex items-center gap-2">
+                    {opt.color && (
+                      <span
+                        className="h-2 w-2 shrink-0 rounded-full"
+                        style={{ backgroundColor: opt.color }}
+                      />
+                    )}
+                    {opt.label}
+                  </span>
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
@@ -528,20 +544,13 @@ function ConversationItem({
           <p className="truncate text-xs text-muted-foreground">
             {conversation.last_message_text || "No messages yet"}
           </p>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {conversation.unread_count > 0 && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
-                {conversation.unread_count}
-              </span>
-            )}
-            <span
-              className={cn(
-                "h-2 w-2 rounded-full",
-                STATUS_COLORS[conversation.status]
+            <div className="flex shrink-0 items-center gap-1.5">
+              {conversation.unread_count > 0 && (
+                <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
+                  {conversation.unread_count}
+                </span>
               )}
-              title={conversation.status}
-            />
-          </div>
+            </div>
         </div>
       </div>
     </button>

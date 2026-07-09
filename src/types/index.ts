@@ -156,8 +156,10 @@ export interface Conversation {
   assigned_agent_id?: string;
   last_message_text?: string;
   last_message_at?: string;
+  last_customer_message_at?: string;
   unread_count: number;
   custom_status_id?: string;
+  exported_to_sheet?: boolean;
   created_at: string;
   updated_at: string;
   contact?: Contact;

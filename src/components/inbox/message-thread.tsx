@@ -9,10 +9,10 @@ import { presenceLabel } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 import type {
   Conversation,
+  ConversationStatus,
   Message,
   MessageReaction,
   Contact,
-  ConversationStatus,
   MessageTemplate,
   Profile,
 } from "@/types";
@@ -26,6 +26,8 @@ import {
   RefreshCw,
   PanelRightOpen,
   PanelRightClose,
+  FileSpreadsheet,
+  Loader2,
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +38,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "./message-bubble";
 import { MessageActions } from "./message-actions";
@@ -133,11 +143,7 @@ function groupMessagesByDate(messages: Message[]) {
   return groups;
 }
 
-const STATUS_OPTIONS: { label: string; value: ConversationStatus; color: string }[] = [
-  { label: "Open", value: "open", color: "text-primary" },
-  { label: "Pending", value: "pending", color: "text-amber-400" },
-  { label: "Closed", value: "closed", color: "text-muted-foreground" },
-];
+
 
 /**
  * WhatsApp-style doodle background applied to the chat area (both the
@@ -578,20 +584,7 @@ export function MessageThread({
     [conversation, onNewMessage, onUpdateMessage],
   );
 
-  const handleStatusChange = useCallback(
-    async (status: ConversationStatus) => {
-      if (!conversation) return;
 
-      const supabase = createClient();
-      await supabase
-        .from("conversations")
-        .update({ status })
-        .eq("id", conversation.id);
-
-      onStatusChange(conversation.id, status);
-    },
-    [conversation, onStatusChange]
-  );
 
   const handleCustomStatusChange = useCallback(
     async (customStatusId: string | null) => {
@@ -614,6 +607,66 @@ export function MessageThread({
     },
     [conversation, onCustomStatusChange]
   );
+
+  const [exportingLead, setExportingLead] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [remarkText, setRemarkText] = useState("");
+
+  const handleOpenExportModal = useCallback(async () => {
+    if (!conversation) return;
+    setExportModalOpen(true);
+    setRemarkText("");
+    
+    // Fetch latest note to prefill
+    try {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('contact_notes')
+        .select('note_text')
+        .eq('contact_id', conversation.contact_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (data?.note_text) {
+        setRemarkText(data.note_text);
+      }
+    } catch (err) {
+      console.error('Failed to prefill note:', err);
+    }
+  }, [conversation]);
+
+  const handleConfirmExport = useCallback(() => {
+    if (!conversation) return;
+    
+    const remarkToSend = remarkText.trim();
+    const contactId = conversation.contact_id;
+    const conversationId = conversation.id;
+
+    // Close modal instantly
+    setExportModalOpen(false);
+    toast.loading('Sending lead details...', { id: 'lead-export' });
+
+    // Run the request in the background
+    fetch('/api/whatsapp/export-lead', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        contactId,
+        conversationId,
+        remark: remarkToSend
+      }),
+    })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || 'Failed to export lead');
+        }
+        toast.success('Lead exported successfully!', { id: 'lead-export' });
+      })
+      .catch((err) => {
+        toast.error(err instanceof Error ? err.message : 'Failed to export lead', { id: 'lead-export' });
+      });
+  }, [conversation, remarkText]);
 
   const handleOpenTemplates = useCallback(() => {
     setTemplateModalOpen(true);
@@ -838,9 +891,6 @@ export function MessageThread({
 
   const displayName = contact.name || contact.phone;
   const messageGroups = groupMessagesByDate(messages);
-  const currentStatus = STATUS_OPTIONS.find(
-    (s) => s.value === conversation.status
-  );
   const activeCustomStatus = customStatuses.find(
     (s) => s.id === conversation.custom_status_id
   );
@@ -898,6 +948,26 @@ export function MessageThread({
         </div>
 
         <div className="flex items-center gap-2">
+          {conversation && (
+            <div className="flex items-center gap-1.5">
+              {conversation.exported_to_sheet && (
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                  <Check className="h-3 w-3 text-emerald-400" />
+                  Sent
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={handleOpenExportModal}
+                title="Export Lead to Google Sheet / Webhook"
+                className="inline-flex items-center justify-center h-7 gap-1 px-2.5 text-xs font-semibold rounded-md border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-60"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+                <span className="hidden md:inline">Send</span>
+              </button>
+            </div>
+          )}
+
           {/* Contact-panel toggle — desktop only. The contact sidebar
               eats a chunk of horizontal width that crowds the thread on
               smaller laptops; this lets agents reclaim it when they just
@@ -985,30 +1055,7 @@ export function MessageThread({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* Status dropdown */}
-          <DropdownMenu>
-            <DropdownMenuTrigger className={cn(
-                  "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
-                  currentStatus?.color ?? "text-muted-foreground"
-                )}>
-                {currentStatus?.label ?? "Status"}
-                <ChevronDown className="h-3 w-3" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="border-border bg-popover"
-            >
-              {STATUS_OPTIONS.map((opt) => (
-                <DropdownMenuItem
-                  key={opt.value}
-                  onClick={() => handleStatusChange(opt.value)}
-                  className={cn("text-sm", opt.color)}
-                >
-                  {opt.label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+
 
           {/* Assign dropdown */}
           <DropdownMenu>
@@ -1166,6 +1213,63 @@ export function MessageThread({
         onOpenChange={setTemplateModalOpen}
         onSelect={handleSendTemplate}
       />
+
+      <Dialog open={exportModalOpen} onOpenChange={setExportModalOpen}>
+        <DialogContent className="sm:max-w-md bg-popover text-popover-foreground border border-border">
+          <DialogHeader>
+            <DialogTitle className="text-foreground font-semibold flex items-center gap-2">
+              <FileSpreadsheet className="h-5 w-5 text-emerald-400" />
+              Export Lead Details
+            </DialogTitle>
+            <DialogDescription className="text-muted-foreground text-xs">
+              Send the lead data (Name: {contact?.name || 'N/A'}, Phone: {contact?.phone || 'N/A'}) and your remark to your configured integrations.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 my-2">
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-foreground">Remark / Note</label>
+              <textarea
+                value={remarkText}
+                onChange={(e) => setRemarkText(e.target.value)}
+                placeholder="Enter remark for this customer..."
+                className="w-full h-24 rounded-lg border border-border bg-muted p-2 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary/50 focus:outline-none"
+              />
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                This remark will be sent directly to your configured integrations (Webhook / Google Sheet).
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setExportModalOpen(false)}
+              className="px-3 py-1.5 rounded-md border border-border hover:bg-muted text-xs font-medium text-foreground transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmExport}
+              disabled={exportingLead}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60 text-xs font-semibold transition-colors"
+            >
+              {exportingLead ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Sending...
+                </>
+              ) : (
+                <>
+                  <FileSpreadsheet className="h-3 w-3" />
+                  Confirm & Send
+                </>
+              )}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, use } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
@@ -20,10 +20,17 @@ const steps = [
   { label: 'Send', key: 'send' },
 ] as const;
 
-export default function NewBroadcastPage() {
+export default function NewBroadcastPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ draft?: string }>;
+}) {
   const router = useRouter();
   const { accountId } = useAuth();
-  const { createAndSendBroadcast, isProcessing, progress } = useBroadcastSending();
+  const { createAndSendBroadcast, isProcessing } = useBroadcastSending();
+
+  const unwrappedParams = use(searchParams);
+  const draftId = unwrappedParams?.draft;
 
   const [currentStep, setCurrentStep] = useState(0);
   const [template, setTemplate] = useState<MessageTemplate | null>(null);
@@ -45,6 +52,52 @@ export default function NewBroadcastPage() {
   const [name, setName] = useState('');
   const [assignedAgentId, setAssignedAgentId] = useState<string | null>(null);
 
+  // Load draft data if draftId is present
+  useState(() => {
+    if (!draftId) return;
+    (async () => {
+      const supabase = createClient();
+      const { data: broadcast } = await supabase
+        .from('broadcasts')
+        .select('*')
+        .eq('id', draftId)
+        .single();
+
+      if (!broadcast) return;
+
+      setName(broadcast.name || '');
+      setAssignedAgentId(broadcast.assigned_agent_id || null);
+
+      if (broadcast.template_variables) {
+        setVariables(broadcast.template_variables as any);
+      }
+
+      if (broadcast.template_name) {
+        const { data: templateData } = await supabase
+          .from('message_templates')
+          .select('*')
+          .eq('name', broadcast.template_name)
+          .eq('language', broadcast.template_language || 'en_US')
+          .maybeSingle();
+
+        if (templateData) {
+          setTemplate(templateData as any);
+        }
+      }
+
+      if (broadcast.audience_filter) {
+        const filter = broadcast.audience_filter as any;
+        setAudience({
+          type: filter.type || 'all',
+          tagIds: filter.tagIds || [],
+          customField: filter.customField || undefined,
+          csvContacts: filter.csvContacts || undefined,
+          excludeTagIds: filter.excludeTagIds || [],
+        });
+      }
+    })();
+  });
+
   async function handleSend() {
     if (!template) return;
 
@@ -62,11 +115,10 @@ export default function NewBroadcastPage() {
         variables,
         headerMediaUrl,
         assignedAgentId,
+        existingBroadcastId: draftId,
       });
       router.push(`/broadcasts/${broadcastId}`);
     } catch (err) {
-      // Previously swallowed with console.error — the wizard would
-      // just no-op, leaving the user confused. Surface the reason.
       const message = err instanceof Error ? err.message : 'Broadcast failed';
       console.error('Broadcast failed:', err);
       toast.error(message);
@@ -101,7 +153,7 @@ export default function NewBroadcastPage() {
       return;
     }
 
-    const { error } = await supabase.from('broadcasts').insert({
+    const payload = {
       user_id: user.id,
       account_id: accountId,
       name: name.trim(),
@@ -111,6 +163,9 @@ export default function NewBroadcastPage() {
       audience_filter: {
         type: audience.type,
         tagIds: audience.tagIds,
+        customField: audience.customField,
+        csvContacts: audience.csvContacts,
+        excludeTagIds: audience.excludeTagIds,
       },
       status: 'draft',
       assigned_agent_id: assignedAgentId || null,
@@ -120,7 +175,21 @@ export default function NewBroadcastPage() {
       read_count: 0,
       replied_count: 0,
       failed_count: 0,
-    });
+    };
+
+    let error;
+    if (draftId) {
+      const { error: err } = await supabase
+        .from('broadcasts')
+        .update(payload)
+        .eq('id', draftId);
+      error = err;
+    } else {
+      const { error: err } = await supabase
+        .from('broadcasts')
+        .insert(payload);
+      error = err;
+    }
 
     if (error) {
       toast.error(`Failed to save draft: ${error.message}`);
@@ -226,7 +295,6 @@ export default function NewBroadcastPage() {
               onSaveDraft={handleSaveDraft}
               onBack={() => setCurrentStep(2)}
               isProcessing={isProcessing}
-              progress={progress}
               assignedAgentId={assignedAgentId}
               onAssignedAgentChange={setAssignedAgentId}
             />

@@ -215,6 +215,11 @@ export function SettingsOverview({
       loading: false,
       subtitle: `${cap(mode)} mode · ${themeName} accent`,
     },
+    {
+      section: 'integrations',
+      loading: false,
+      subtitle: 'Webhook and Google Sheets configs',
+    },
   ];
 
   const allowedTiles = tiles.filter(

@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
@@ -15,6 +15,12 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from '@/lib/rate-limit'
+import {
+  deliverBroadcast,
+  type BroadcastPlan,
+} from '@/lib/whatsapp/broadcast-core'
+
+export const maxDuration = 60;
 
 interface BroadcastResult {
   phone: string
@@ -24,7 +30,11 @@ interface BroadcastResult {
 }
 
 /**
- * Two input shapes are accepted:
+ * Three input shapes are accepted:
+ *
+ *   BACKGROUND (dashboard wizard — creates broadcast + recipients
+ *   client-side, then fires-and-forgets):
+ *     { broadcastId: string }
  *
  *   NEW (preferred — supports per-recipient variable substitution):
  *     {
@@ -39,11 +49,6 @@ interface BroadcastResult {
  *       template_params: string[],
  *       template_name, template_language
  *     }
- *
- * Previous implementation only supported the legacy shape, and the
- * sending hook was forced to ship every batch with `templateParams[0]`
- * — meaning every recipient got contact-0's personalization. The new
- * shape is what actually fixes that.
  */
 interface NewRecipient {
   phone: string
@@ -97,6 +102,124 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
+
+    // ── Background-send mode ──────────────────────────────────────
+    // The dashboard wizard creates the broadcast + recipient rows
+    // client-side, then sends { broadcastId } here. We build a
+    // BroadcastPlan from the existing DB rows and fan out in after().
+    if (typeof body.broadcastId === 'string' && !body.recipients && !body.phone_numbers) {
+      const broadcastId = body.broadcastId as string
+
+      // Fetch the broadcast row
+      const { data: broadcast, error: bcErr } = await supabase
+        .from('broadcasts')
+        .select('*')
+        .eq('id', broadcastId)
+        .single()
+      if (bcErr || !broadcast) {
+        return NextResponse.json(
+          { error: 'Broadcast not found' },
+          { status: 404 },
+        )
+      }
+
+      // Fetch WhatsApp config
+      const { data: config, error: configErr } = await supabase
+        .from('whatsapp_config')
+        .select('*')
+        .eq('account_id', accountId)
+        .single()
+      if (configErr || !config) {
+        return NextResponse.json(
+          { error: 'WhatsApp not configured.' },
+          { status: 400 },
+        )
+      }
+
+      // Load the template row for header/button components
+      const { data: rawTemplateRow } = await supabase
+        .from('message_templates')
+        .select('*')
+        .eq('account_id', accountId)
+        .eq('name', broadcast.template_name)
+        .eq('language', broadcast.template_language || 'en_US')
+        .maybeSingle()
+      const templateRow = rawTemplateRow && isMessageTemplate(rawTemplateRow)
+        ? rawTemplateRow
+        : null
+
+      // Fetch all pending/failed recipients with their contacts
+      const { data: recipients, error: recsErr } = await supabase
+        .from('broadcast_recipients')
+        .select('id, contact_id, status, contact:contacts(id, phone)')
+        .eq('broadcast_id', broadcastId)
+        .in('status', ['pending', 'failed'])
+      if (recsErr || !recipients || recipients.length === 0) {
+        return NextResponse.json(
+          { error: 'No pending recipients found' },
+          { status: 400 },
+        )
+      }
+
+      // Resolve template variables from the broadcast row
+      const templateVars = (broadcast.template_variables ?? {}) as Record<
+        string,
+        { type: string; value: string }
+      >
+
+      // Build the planned array
+      const planned = (recipients as any[])
+        .filter((r: any) => r.contact && (Array.isArray(r.contact) ? r.contact[0]?.phone : r.contact?.phone))
+        .map((r: any) => {
+          const contactObj = Array.isArray(r.contact) ? r.contact[0] : r.contact;
+          return {
+            recipientRowId: r.id as string,
+            phone: contactObj.phone as string,
+            params: Object.keys(templateVars)
+              .sort((a, b) => Number(a) - Number(b))
+              .map((key) => {
+                const v = templateVars[key]
+                if (v?.type === 'static') return v.value ?? ''
+                // For field/custom_field mappings, send empty — the
+                // server-side deliverBroadcast resolves from the DB.
+                return ''
+              }),
+          }
+        })
+
+      // Mark the broadcast as sending
+      await supabase
+        .from('broadcasts')
+        .update({ status: 'sending' })
+        .eq('id', broadcastId)
+
+      // Reset failed recipients back to pending before retry
+      await supabase
+        .from('broadcast_recipients')
+        .update({ status: 'pending', error_message: null })
+        .eq('broadcast_id', broadcastId)
+        .eq('status', 'failed')
+
+      const plan: BroadcastPlan = {
+        broadcastId,
+        templateName: broadcast.template_name,
+        templateLanguage: broadcast.template_language || 'en_US',
+        phoneNumberId: config.phone_number_id,
+        accessToken: decrypt(config.access_token),
+        templateRow,
+        planned,
+        rejected: 0,
+      }
+
+      after(() => deliverBroadcast(supabase, plan))
+
+      return NextResponse.json(
+        { success: true, broadcastId, status: 'sending' },
+        { status: 202 },
+      )
+    }
+
+    // ── Inline-send mode (legacy) ─────────────────────────────────
     const {
       recipients: newRecipients,
       phone_numbers,
