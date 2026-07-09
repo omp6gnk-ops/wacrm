@@ -18,6 +18,14 @@ interface DispatchArgs {
 }
 
 /**
+ * How many minutes of inactivity from a human agent before AI resumes
+ * replying on an assigned conversation. If an agent sent a message
+ * within this window, the AI stands down to avoid double-texting.
+ * Outside this window (e.g. night-time, holidays), AI takes over.
+ */
+const AGENT_ACTIVE_WINDOW_MINUTES = 5
+
+/**
  * AI auto-reply for a freshly-arrived inbound message.
  *
  * Invoked from the WhatsApp webhook's `after()` block, only when no
@@ -27,7 +35,8 @@ interface DispatchArgs {
  *
  * Eligibility gates (any → silent no-op):
  *   - AI off / auto-reply disabled for the account
- *   - a human agent is assigned (they own the thread)
+ *   - a human agent is ACTIVELY chatting (sent a message in the last
+ *     5 minutes) — they own the thread right now
  *   - auto-reply was disabled for this conversation (prior handoff)
  *   - the per-conversation reply cap is reached
  *   - there's nothing to reply to
@@ -70,8 +79,33 @@ export async function dispatchInboundToAiReply(
       .eq('id', conversationId)
       .maybeSingle()
     if (convErr || !conv) return
-    if (conv.assigned_agent_id) return // a human owns this thread
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
+
+    // Smart agent-activity gate: instead of blocking AI entirely when a
+    // chat is assigned, we check whether a human agent is ACTIVELY
+    // chatting right now (sent a message in the last N minutes). This
+    // allows AI to handle assigned chats when agents are offline (night,
+    // holidays, busy) while still yielding when an agent is live.
+    if (conv.assigned_agent_id) {
+      const cutoff = new Date(
+        Date.now() - AGENT_ACTIVE_WINDOW_MINUTES * 60 * 1000,
+      ).toISOString()
+
+      const { data: recentAgentMsgs } = await db
+        .from('messages')
+        .select('id')
+        .eq('conversation_id', conversationId)
+        .eq('sender_type', 'agent')
+        .gte('created_at', cutoff)
+        .limit(1)
+
+      if (recentAgentMsgs && recentAgentMsgs.length > 0) {
+        // Agent is actively chatting — stand down.
+        return
+      }
+      // Agent is assigned but inactive — AI takes over.
+    }
+
     // Cheap early-out; the authoritative cap check is the atomic claim
     // below (this read can race a concurrent inbound).
     if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return

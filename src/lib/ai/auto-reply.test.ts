@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   state: {
     conv: null as Record<string, unknown> | null,
     autoResponders: [] as { id: string }[],
+    recentAgentMessages: [] as { id: string }[],
     claim: true as boolean,
     updatePayload: null as Record<string, unknown> | null,
     rpcCalls: [] as { name: string; args: unknown }[],
@@ -35,6 +36,17 @@ vi.mock('./admin-client', () => ({
             Promise.resolve({ data: h.state.autoResponders, error: null }),
         }
         return chain
+      }
+      if (table === 'messages') {
+        // .select().eq().eq().gte().limit() → recent agent messages
+        const mChain = {
+          select: () => mChain,
+          eq: () => mChain,
+          gte: () => mChain,
+          limit: () =>
+            Promise.resolve({ data: h.state.recentAgentMessages, error: null }),
+        }
+        return mChain
       }
       // conversations
       return {
@@ -87,6 +99,7 @@ beforeEach(() => {
     ai_reply_count: 0,
   }
   h.state.autoResponders = []
+  h.state.recentAgentMessages = []
   h.state.claim = true
   h.state.updatePayload = null
   h.state.rpcCalls = []
@@ -147,12 +160,24 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.engineSendText).not.toHaveBeenCalled()
   })
 
-  it('skips when a human agent is assigned', async () => {
+  it('sends when a human agent is assigned but inactive (no recent messages)', async () => {
     h.state.conv = {
       assigned_agent_id: 'agent-9',
       ai_autoreply_disabled: false,
       ai_reply_count: 0,
     }
+    h.state.recentAgentMessages = []
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).toHaveBeenCalled()
+  })
+
+  it('skips when a human agent is actively chatting (recent message)', async () => {
+    h.state.conv = {
+      assigned_agent_id: 'agent-9',
+      ai_autoreply_disabled: false,
+      ai_reply_count: 0,
+    }
+    h.state.recentAgentMessages = [{ id: 'msg-1' }]
     await dispatchInboundToAiReply(ARGS)
     expect(h.engineSendText).not.toHaveBeenCalled()
   })
