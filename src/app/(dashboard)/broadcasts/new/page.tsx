@@ -46,7 +46,7 @@ export default function NewBroadcastPage({
     excludeTagIds?: string[];
   }>({ type: 'all' });
   const [variables, setVariables] = useState<
-    Record<string, { type: 'static' | 'field' | 'custom_field'; value: string }>
+    Record<string, { type: 'static' | 'field' | 'custom_field' | 'csv_column'; value: string }>
   >({});
   const [headerMediaUrl, setHeaderMediaUrl] = useState('');
   const [name, setName] = useState('');
@@ -277,6 +277,7 @@ export default function NewBroadcastPage({
           {currentStep === 2 && template && (
             <Step3Personalize
               template={template}
+              audience={audience}
               variables={variables}
               onUpdate={setVariables}
               headerMediaUrl={headerMediaUrl}

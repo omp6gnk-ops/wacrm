@@ -17,7 +17,7 @@ export interface AudienceConfig {
   type: 'all' | 'tags' | 'custom_field' | 'csv' | 'manual';
   tagIds?: string[];
   customField?: CustomFieldFilter;
-  csvContacts?: { phone: string; name?: string }[];
+  csvContacts?: { phone: string; name?: string; variables?: Record<string, string> }[];
   /** Contacts carrying any of these tags are subtracted from the result. */
   excludeTagIds?: string[];
 }
@@ -32,7 +32,8 @@ export interface AudienceConfig {
 export type VariableMapping =
   | { type: 'static'; value: string }
   | { type: 'field'; value: string }
-  | { type: 'custom_field'; value: string };
+  | { type: 'custom_field'; value: string }
+  | { type: 'csv_column'; value: string };
 
 interface BroadcastPayload {
   name: string;
@@ -255,6 +256,21 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       }
     }
 
+    // Update names for existing contacts if they only have phone or null name
+    for (const [phone, row] of uniqueByPhone.entries()) {
+      const existingContact = byPhone.get(phone);
+      if (existingContact && row.name) {
+        const hasNoName = !existingContact.name || existingContact.name === existingContact.phone;
+        if (hasNoName && existingContact.name !== row.name) {
+          await supabase
+            .from('contacts')
+            .update({ name: row.name })
+            .eq('id', existingContact.id);
+          existingContact.name = row.name;
+        }
+      }
+    }
+
     // Preserve input order so analytics roughly matches the CSV order.
     return phones
       .map((p) => byPhone.get(p))
@@ -390,11 +406,26 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       }
 
       // ── Step 3: Insert recipient rows ─────────────────────────────
-      const recipientRows = contacts.map((contact) => ({
-        broadcast_id: broadcastId,
-        contact_id: contact.id,
-        status: 'pending' as const,
-      }));
+      const csvVarsMap = new Map<string, Record<string, string>>();
+      if (payload.audience.csvContacts) {
+        for (const row of payload.audience.csvContacts) {
+          const sanitized = row.phone.replace(/\D/g, ''); // Simple phone sanitization to match
+          if (row.variables) {
+            csvVarsMap.set(sanitized, row.variables);
+          }
+        }
+      }
+
+      const recipientRows = contacts.map((contact) => {
+        const sanitizedPhone = contact.phone.replace(/\D/g, '');
+        const vars = csvVarsMap.get(sanitizedPhone) || null;
+        return {
+          broadcast_id: broadcastId,
+          contact_id: contact.id,
+          status: 'pending' as const,
+          variables: vars,
+        };
+      });
 
       for (let i = 0; i < recipientRows.length; i += INSERT_BATCH_SIZE) {
         const batch = recipientRows.slice(i, i + INSERT_BATCH_SIZE);

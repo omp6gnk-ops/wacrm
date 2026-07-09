@@ -15,7 +15,7 @@ import {
   X,
   FileText,
 } from 'lucide-react';
-import { parseContactCsv } from '@/lib/contacts/parse-contact-csv';
+import { parseContactCsv, parseCsvLine } from '@/lib/contacts/parse-contact-csv';
 
 type AudienceType = 'all' | 'tags' | 'manual' | 'custom_field' | 'csv';
 type CustomFieldOperator = 'is' | 'is_not' | 'contains';
@@ -91,18 +91,36 @@ export function Step2SelectAudience({
   const [loadingFields, setLoadingFields] = useState(false);
   const [estimatedCount, setEstimatedCount] = useState<number | null>(null);
   const [loadingCount, setLoadingCount] = useState(false);
+  const getPastedString = useCallback((contacts: { phone: string; name?: string; variables?: Record<string, string> }[]) => {
+    return contacts
+      .map((c) => {
+        const vars = c.variables || {};
+        const keys = Object.keys(vars).sort((a, b) => {
+          const an = Number(a.replace(/\D/g, ''));
+          const bn = Number(b.replace(/\D/g, ''));
+          if (Number.isFinite(an) && Number.isFinite(bn)) return an - bn;
+          return a.localeCompare(b);
+        });
+        if (keys.length > 0) {
+          return keys.map(k => vars[k]).join(', ');
+        }
+        return c.name ? `${c.phone}, ${c.name}` : c.phone;
+      })
+      .join('\n');
+  }, []);
+
   const [pastedText, setPastedText] = useState(() =>
-    (audience.csvContacts ?? []).map((c) => c.phone).join('\n')
+    getPastedString(audience.csvContacts ?? [])
   );
 
   useEffect(() => {
     if (audience.type === 'manual') {
-      const current = (audience.csvContacts ?? []).map((c) => c.phone).join('\n');
+      const current = getPastedString(audience.csvContacts ?? []);
       if (current !== pastedText) {
         setPastedText(current);
       }
     }
-  }, [audience.csvContacts, audience.type]);
+  }, [audience.csvContacts, audience.type, getPastedString, pastedText]);
 
   // Tags are used both by the primary "Filter by Tags" audience type
   // AND by the exclude-list below — so always load once on mount.
@@ -316,11 +334,30 @@ export function Step2SelectAudience({
             onChange={(e) => {
               const val = e.target.value;
               setPastedText(val);
-              const lines = val.split(/[\n,;]/);
+              const lines = val.split('\n');
               const parsed = lines
                 .map((line) => line.trim())
                 .filter((line) => line.length > 0)
-                .map((phone) => ({ phone }));
+                .map((line) => {
+                  const parts = line.includes('\t') 
+                    ? line.split('\t') 
+                    : line.split(/[,;]/);
+                  
+                  const phone = parts[0]?.trim() || '';
+                  const name = parts[1]?.trim() || undefined;
+
+                  const rowVars: Record<string, string> = {};
+                  parts.forEach((part, idx) => {
+                    rowVars[`Column ${idx + 1}`] = part.trim();
+                  });
+
+                  return {
+                    phone,
+                    name,
+                    variables: rowVars
+                  };
+                })
+                .filter(c => c.phone.length > 0);
 
               onUpdate({
                 ...audience,
@@ -400,16 +437,58 @@ export function Step2SelectAudience({
 
                 try {
                   const text = await file.text();
-                  const { rows } = parseContactCsv(text);
+                  const lines = text.trim().split(/\r?\n/);
+                  if (lines.length < 2) {
+                    alert("CSV is empty or missing content.");
+                    return;
+                  }
 
-                  if (rows.length === 0) {
-                    alert("No valid contacts found in CSV. Make sure you have a 'phone' column header.");
+                  const headers = lines[0]
+                    .split(',')
+                    .map((h) => h.trim().toLowerCase().replace(/["']/g, ''));
+
+                  const phoneIdx = headers.findIndex((h) => h === 'phone');
+                  const activePhoneIdx = phoneIdx >= 0 ? phoneIdx : 0;
+                  
+                  const nameIdx = headers.findIndex((h) => h === 'name');
+                  const activeNameIdx = nameIdx >= 0 ? nameIdx : -1;
+
+                  const rawHeaders = lines[0].split(',').map((h) => h.trim().replace(/["']/g, ''));
+
+                  const parsed = [];
+                  for (let i = 1; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (!line) continue;
+                    const values = parseCsvLine(line);
+                    const phone = values[activePhoneIdx]?.replace(/["']/g, '').trim();
+                    if (!phone) continue;
+
+                    const name = activeNameIdx >= 0 && activeNameIdx < values.length
+                      ? values[activeNameIdx]?.replace(/["']/g, '').trim()
+                      : undefined;
+
+                    const rowVars: Record<string, string> = {};
+                    rawHeaders.forEach((header, idx) => {
+                      if (idx < values.length) {
+                        rowVars[header] = values[idx]?.replace(/["']/g, '').trim() || '';
+                      }
+                    });
+
+                    parsed.push({
+                      phone,
+                      name: name || undefined,
+                      variables: rowVars,
+                    });
+                  }
+
+                  if (parsed.length === 0) {
+                    alert("No valid contacts found in CSV.");
                     return;
                   }
 
                   onUpdate({
                     ...audience,
-                    csvContacts: rows.map((r) => ({ phone: r.phone, name: r.name })),
+                    csvContacts: parsed,
                   });
                 } catch (err) {
                   alert("Failed to parse CSV file.");
@@ -419,7 +498,7 @@ export function Step2SelectAudience({
             <label htmlFor="broadcast-csv-upload" className="cursor-pointer flex flex-col items-center gap-2 w-full text-center">
               <Upload className="h-8 w-8 text-primary" />
               <span className="text-sm text-foreground font-medium">Click to upload CSV</span>
-              <span className="text-xs text-muted-foreground font-mono">Header must include "phone" (optional: "name")</span>
+              <span className="text-xs text-muted-foreground font-mono">Header should include "phone" (optional: "name" or other custom columns)</span>
             </label>
           </div>
 

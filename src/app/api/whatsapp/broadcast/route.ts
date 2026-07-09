@@ -63,6 +63,30 @@ interface NewRecipient {
   messageParams?: SendTimeParams
 }
 
+async function fetchCustomValueIndex(
+  supabase: any,
+  contactIds: string[],
+): Promise<Map<string, Map<string, string>>> {
+  const index = new Map<string, Map<string, string>>();
+  if (contactIds.length === 0) return index;
+
+  const PAGE = 500;
+  for (let i = 0; i < contactIds.length; i += PAGE) {
+    const slice = contactIds.slice(i, i + PAGE);
+    const { data } = await supabase
+      .from('contact_custom_values')
+      .select('contact_id, custom_field_id, value')
+      .in('contact_id', slice);
+
+    for (const row of data ?? []) {
+      const bucket = index.get(row.contact_id) ?? new Map<string, string>();
+      bucket.set(row.custom_field_id, row.value ?? '');
+      index.set(row.contact_id, bucket);
+    }
+  }
+  return index;
+}
+
 export async function POST(request: Request) {
   try {
     const supabase = await createClient()
@@ -151,7 +175,7 @@ export async function POST(request: Request) {
       // Fetch all pending/failed recipients with their contacts
       const { data: recipients, error: recsErr } = await supabase
         .from('broadcast_recipients')
-        .select('id, contact_id, status, contact:contacts(id, phone)')
+        .select('id, contact_id, status, variables, contact:contacts(*)')
         .eq('broadcast_id', broadcastId)
         .in('status', ['pending', 'failed'])
       if (recsErr || !recipients || recipients.length === 0) {
@@ -167,22 +191,49 @@ export async function POST(request: Request) {
         { type: string; value: string }
       >
 
+      // Extract unique contact IDs to fetch custom values
+      const contactIds = (recipients as any[])
+        .map((r: any) => {
+          const contactObj = Array.isArray(r.contact) ? r.contact[0] : r.contact;
+          return contactObj?.id;
+        })
+        .filter(Boolean);
+
+      const customValueIndex = await fetchCustomValueIndex(supabase, contactIds);
+
       // Build the planned array
       const planned = (recipients as any[])
         .filter((r: any) => r.contact && (Array.isArray(r.contact) ? r.contact[0]?.phone : r.contact?.phone))
         .map((r: any) => {
           const contactObj = Array.isArray(r.contact) ? r.contact[0] : r.contact;
+          const customVals = customValueIndex.get(contactObj.id) ?? new Map();
+          
           return {
             recipientRowId: r.id as string,
             phone: contactObj.phone as string,
             params: Object.keys(templateVars)
               .sort((a, b) => Number(a) - Number(b))
               .map((key) => {
-                const v = templateVars[key]
-                if (v?.type === 'static') return v.value ?? ''
-                // For field/custom_field mappings, send empty — the
-                // server-side deliverBroadcast resolves from the DB.
-                return ''
+                const v = templateVars[key];
+                if (!v) return '';
+                if (v.type === 'static') return v.value ?? '';
+                if (v.type === 'field') {
+                  const fieldMap: Record<string, string | undefined> = {
+                    name: contactObj.name,
+                    phone: contactObj.phone,
+                    email: contactObj.email,
+                    company: contactObj.company,
+                  };
+                  return fieldMap[v.value] ?? '';
+                }
+                if (v.type === 'custom_field') {
+                  return customVals.get(v.value) ?? '';
+                }
+                if (v.type === 'csv_column') {
+                  const rowVars = (r.variables ?? {}) as Record<string, string>;
+                  return rowVars[v.value] ?? '';
+                }
+                return '';
               }),
           }
         })

@@ -27,16 +27,17 @@ interface MessageBubbleProps {
   onToggleReaction?: (emoji: string) => void;
 }
 
-function StatusIcon({ status }: { status: Message["status"] }) {
+function StatusIcon({ status, isAgent = false }: { status: Message["status"]; isAgent?: boolean }) {
+  const colorClass = isAgent ? "text-white/60" : "text-muted-foreground";
   switch (status) {
     case "sending":
-      return <Clock className="h-3 w-3 text-muted-foreground" />;
+      return <Clock className="h-3 w-3 text-white/50 animate-pulse" />;
     case "sent":
-      return <Check className="h-3 w-3 text-muted-foreground" />;
+      return <Check className={cn("h-3 w-3", colorClass)} />;
     case "delivered":
-      return <CheckCheck className="h-3 w-3 text-muted-foreground" />;
+      return <CheckCheck className={cn("h-3 w-3", colorClass)} />;
     case "read":
-      return <CheckCheck className="h-3 w-3 text-blue-400" />;
+      return <CheckCheck className="h-3 w-3 text-sky-300" />;
     case "failed":
       return <XCircle className="h-3 w-3 text-red-400" />;
     default:
@@ -262,9 +263,9 @@ export function MessageBubble({
     >
       <div
         className={cn(
-          "relative rounded-2xl px-3 py-2",
+          "relative rounded-2xl px-3 py-2 text-left",
           isAgent
-            ? "rounded-br-md bg-primary text-primary-foreground"
+            ? "rounded-br-md bg-primary text-white"
             : "rounded-bl-md bg-muted text-foreground",
         )}
       >
@@ -289,12 +290,12 @@ export function MessageBubble({
               // timestamp must read against that (not the neutral
               // foreground) — otherwise it goes low-contrast in light
               // mode. Inbound bubbles use the muted surface.
-              isAgent ? "text-primary-foreground/70" : "text-muted-foreground",
+              isAgent ? "text-white/70" : "text-muted-foreground",
             )}
           >
             {time}
           </span>
-          {isAgent && <StatusIcon status={message.status} />}
+          {isAgent && <StatusIcon status={message.status} isAgent={true} />}
         </div>
       </div>
       {reactions && reactions.length > 0 && onToggleReaction && (

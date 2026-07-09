@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/select';
 import { ArrowLeft, ArrowRight, Eye, ImageIcon, Loader2 } from 'lucide-react';
 
-type VariableType = 'static' | 'field' | 'custom_field';
+type VariableType = 'static' | 'field' | 'custom_field' | 'csv_column';
 
 interface VariableMapping {
   type: VariableType;
@@ -23,6 +23,17 @@ interface VariableMapping {
 
 interface Step3Props {
   template: MessageTemplate;
+  audience: {
+    type: 'all' | 'tags' | 'custom_field' | 'csv' | 'manual';
+    tagIds?: string[];
+    customField?: {
+      fieldId: string;
+      operator: 'is' | 'is_not' | 'contains';
+      value: string;
+    };
+    csvContacts?: { phone: string; name?: string; variables?: Record<string, string> }[];
+    excludeTagIds?: string[];
+  };
   variables: Record<string, VariableMapping>;
   onUpdate: (variables: Record<string, VariableMapping>) => void;
   /** Media URL for an IMAGE/VIDEO/DOCUMENT header, when the template has one. */
@@ -69,6 +80,7 @@ const SAMPLE_CONTACT: Contact = {
 
 export function Step3Personalize({
   template,
+  audience,
   variables,
   onUpdate,
   headerMediaUrl,
@@ -83,6 +95,12 @@ export function Step3Personalize({
     Map<string, string>
   >(new Map());
   const [loadingPreview, setLoadingPreview] = useState(true);
+
+  const csvColumns = useMemo(() => {
+    if (!audience.csvContacts || audience.csvContacts.length === 0) return [];
+    const first = audience.csvContacts[0];
+    return Object.keys(first.variables || {});
+  }, [audience.csvContacts]);
 
   // Load user's custom fields + a representative contact for the
   // live preview. Fall back to sample data if no contacts exist yet.
@@ -196,6 +214,8 @@ export function Step3Personalize({
       ? firstContactCustomValues
       : new Map<string, string>();
 
+    const csvVariables = audience.csvContacts?.[0]?.variables || {};
+
     let text = template.body_text;
     for (const placeholder of placeholders) {
       const key = placeholder.replace(/^\{\{|\}\}$/g, '');
@@ -215,6 +235,8 @@ export function Step3Personalize({
           replacement = fieldMap[mapping.value] ?? placeholder;
         } else if (mapping.type === 'custom_field' && mapping.value) {
           replacement = customValues.get(mapping.value) || placeholder;
+        } else if (mapping.type === 'csv_column' && mapping.value) {
+          replacement = csvVariables[mapping.value] || placeholder;
         }
       }
       text = text.replaceAll(placeholder, replacement);
@@ -226,6 +248,7 @@ export function Step3Personalize({
     placeholders,
     firstContact,
     firstContactCustomValues,
+    audience.csvContacts,
   ]);
 
   const previewLabel = firstContact
@@ -320,7 +343,7 @@ export function Step3Personalize({
                       Mapping Type
                     </label>
                     <Select
-                      value={mapping.type}
+                      value={mapping.type || "static"}
                       onValueChange={(val) =>
                         updateVariable(key, {
                           type: val as VariableType,
@@ -337,6 +360,9 @@ export function Step3Personalize({
                         <SelectItem value="custom_field">
                           Custom Field
                         </SelectItem>
+                        {(audience.type === 'manual' || audience.type === 'csv') && (
+                          <SelectItem value="csv_column">Uploaded/Pasted Column</SelectItem>
+                        )}
                       </SelectContent>
                     </Select>
                   </div>
@@ -347,24 +373,25 @@ export function Step3Personalize({
                     </label>
                     {mapping.type === 'static' ? (
                       <Input
-                        value={mapping.value}
+                        value={mapping.value || ""}
                         onChange={(e) =>
-                          updateVariable(key, { value: e.target.value })
+                          updateVariable(key, { value: e.target.value || '' })
                         }
                         placeholder="Enter value..."
                         className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
                       />
                     ) : mapping.type === 'field' ? (
                       <Select
-                        value={mapping.value || undefined}
+                        value={mapping.value || "none"}
                         onValueChange={(val) =>
-                          updateVariable(key, { value: val || '' })
+                          updateVariable(key, { value: (val === "none" || val === null) ? "" : val })
                         }
                       >
                         <SelectTrigger className="w-full border-border bg-muted text-foreground">
                           <SelectValue placeholder="Select field..." />
                         </SelectTrigger>
                         <SelectContent className="border-border bg-popover">
+                          <SelectItem value="none">Select field...</SelectItem>
                           {contactFields.map((field) => (
                             <SelectItem key={field.value} value={field.value}>
                               {field.label}
@@ -372,11 +399,30 @@ export function Step3Personalize({
                           ))}
                         </SelectContent>
                       </Select>
+                    ) : mapping.type === 'csv_column' ? (
+                      <Select
+                        value={mapping.value || "none"}
+                        onValueChange={(val) =>
+                          updateVariable(key, { value: (val === "none" || val === null) ? "" : val })
+                        }
+                      >
+                        <SelectTrigger className="w-full border-border bg-muted text-foreground">
+                          <SelectValue placeholder="Select column..." />
+                        </SelectTrigger>
+                        <SelectContent className="border-border bg-popover">
+                          <SelectItem value="none">Select column...</SelectItem>
+                          {csvColumns.map((col) => (
+                            <SelectItem key={col} value={col}>
+                              {col}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     ) : (
                       <Select
-                        value={mapping.value || undefined}
+                        value={mapping.value || "none"}
                         onValueChange={(val) =>
-                          updateVariable(key, { value: val || '' })
+                          updateVariable(key, { value: (val === "none" || val === null) ? "" : val })
                         }
                       >
                         <SelectTrigger className="w-full border-border bg-muted text-foreground">
@@ -391,6 +437,7 @@ export function Step3Personalize({
                           />
                         </SelectTrigger>
                         <SelectContent className="border-border bg-popover">
+                          <SelectItem value="none">Select custom field...</SelectItem>
                           {customFields.map((f) => (
                             <SelectItem key={f.id} value={f.id}>
                               {f.field_name}
