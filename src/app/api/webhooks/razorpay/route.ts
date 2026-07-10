@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { supabaseAdmin } from '@/lib/ai/admin-client'
-import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
+import { engineSendText, engineSendMedia, engineSendCtaUrl } from '@/lib/flows/meta-send'
 
 export async function POST(request: Request) {
   const rawBody = await request.text()
@@ -75,14 +75,14 @@ export async function POST(request: Request) {
       const productName = paymentLink.description || 'Product'
 
       // Parse delivery files
-      let deliveryFiles: string[] = []
+      let deliveryFiles: Array<{ name: string; url: string }> = []
       if (notes.delivery_files) {
         try {
           deliveryFiles = JSON.parse(notes.delivery_files)
         } catch {
           // Fallback if not double-serialized
           if (typeof notes.delivery_files === 'string') {
-            deliveryFiles = [notes.delivery_files]
+            deliveryFiles = [{ name: productName, url: notes.delivery_files }]
           }
         }
       }
@@ -95,15 +95,15 @@ export async function POST(request: Request) {
         userId: '00000000-0000-0000-0000-000000000000', // system role
         conversationId,
         contactId,
-        text: `✅ *Payment Successful!*\nThank you for purchasing *${productName}*. We are preparing your download links...`,
+        text: `✅ *Payment Successful!*\nThank you for purchasing *${productName}*. We are preparing your download buttons...`,
       })
 
       // 3. Deliver the files
       if (deliveryFiles && deliveryFiles.length > 0) {
-        for (const fileLink of deliveryFiles) {
-          if (!fileLink || typeof fileLink !== 'string') continue
+        for (const item of deliveryFiles) {
+          if (!item || !item.url) continue
 
-          const isDirect = /\.(pdf|zip|png|jpe?g)$/i.test(fileLink.split('?')[0])
+          const isDirect = /\.(pdf|zip|png|jpe?g)$/i.test(item.url.split('?')[0])
 
           if (isDirect) {
             try {
@@ -114,24 +114,38 @@ export async function POST(request: Request) {
                 conversationId,
                 contactId,
                 kind: 'document',
-                link: fileLink,
-                caption: productName,
+                link: item.url,
+                caption: item.name || productName,
               })
               continue
             } catch (mediaErr) {
-              console.error(`[razorpay webhook] Failed to send direct media document:`, fileLink, mediaErr)
-              // Fallback to sending text link
+              console.error(`[razorpay webhook] Failed to send direct media document:`, item.url, mediaErr)
+              // Fallback to button/text link
             }
           }
 
-          // Text message delivery
-          await engineSendText({
-            accountId,
-            userId: '00000000-0000-0000-0000-000000000000',
-            conversationId,
-            contactId,
-            text: `Download link for *${productName}*:\n👉 ${fileLink}`,
-          })
+          try {
+            // Deliver as an Interactive CTA URL Button message
+            await engineSendCtaUrl({
+              accountId,
+              userId: '00000000-0000-0000-0000-000000000000',
+              conversationId,
+              contactId,
+              bodyText: `Aapka product download karne ke liye ready hai: *${item.name || productName}*`,
+              buttonDisplayText: 'Download File',
+              buttonUrl: item.url,
+            })
+          } catch (ctaErr) {
+            console.error(`[razorpay webhook] Failed to send CTA URL button:`, item.url, ctaErr)
+            // Ultimate fallback to sending text link
+            await engineSendText({
+              accountId,
+              userId: '00000000-0000-0000-0000-000000000000',
+              conversationId,
+              contactId,
+              text: `Download link for *${item.name || productName}*:\n👉 ${item.url}`,
+            })
+          }
         }
       } else {
         await engineSendText({

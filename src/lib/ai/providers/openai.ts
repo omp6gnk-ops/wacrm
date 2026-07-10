@@ -26,16 +26,17 @@ export async function generateOpenAi(args: ProviderArgs): Promise<string> {
       type: 'function',
       function: {
         name: 'generate_payment_link',
-        description: 'Generate a Razorpay payment link for a customer to purchase a product.',
+        description: 'Generate a single Razorpay payment link for a customer to purchase one or more products.',
         parameters: {
           type: 'object',
           properties: {
-            product_id: {
-              type: 'string',
-              description: 'The UUID of the product the customer wants to purchase (from the available products list).'
+            product_ids: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'An array of UUIDs of the product(s) the customer wants to purchase (from the available products list).'
             }
           },
-          required: ['product_id']
+          required: ['product_ids']
         }
       }
     }
@@ -99,31 +100,59 @@ export async function generateOpenAi(args: ProviderArgs): Promise<string> {
             const params = JSON.parse(toolCall.function.arguments)
             const db = (await import('../admin-client')).supabaseAdmin()
             
-            // Query the product catalog
-            const { data: product, error: prodErr } = await db
+            // Query the product catalog for all matching IDs
+            const { data: matchedProducts, error: prodErr } = await db
               .from('ai_products')
               .select('name, price, file_url')
-              .eq('id', params.product_id)
-              .maybeSingle()
+              .in('id', params.product_ids)
 
-            if (prodErr || !product) {
-              throw new Error(`Product with ID ${params.product_id} not found in the catalog.`)
+            if (prodErr || !matchedProducts || matchedProducts.length === 0) {
+              throw new Error(`None of the product IDs [${params.product_ids?.join(',')}] were found in the catalog.`)
             }
 
+            // Sum prices and combine names
+            const totalAmount = matchedProducts.reduce((sum, p) => sum + Number(p.price), 0)
+            const combinedName = matchedProducts.map((p) => p.name).join(' + ')
+            const deliveryFiles = matchedProducts.map((p) => ({ name: p.name, url: p.file_url }))
+
+            // Generate Razorpay Link
             const { createRazorpayLink } = await import('../../razorpay/link')
             const paymentLink = await createRazorpayLink({
               accountId: args.accountId!,
               conversationId: args.conversationId!,
-              amount: product.price,
-              productName: product.name,
-              deliveryFiles: [product.file_url],
+              amount: totalAmount,
+              productName: combinedName,
+              deliveryFiles, // Array of { name, url } objects
+            })
+
+            // Fetch contactId for sending the interactive button
+            const { data: conv } = await db
+              .from('conversations')
+              .select('contact_id')
+              .eq('id', args.conversationId!)
+              .maybeSingle()
+
+            if (!conv || !conv.contact_id) {
+              throw new Error('Contact not found for this conversation.')
+            }
+
+            // Deliver the payment button to WhatsApp directly
+            const { engineSendCtaUrl } = await import('../../flows/meta-send')
+            await engineSendCtaUrl({
+              accountId: args.accountId!,
+              userId: '00000000-0000-0000-0000-000000000000', // system bot
+              conversationId: args.conversationId!,
+              contactId: conv.contact_id,
+              bodyText: `Aapke liye payment button ready hai! Niche *Pay Now* button par click karke ₹${totalAmount} pay karein.`,
+              buttonDisplayText: 'Pay Now',
+              buttonUrl: paymentLink,
             })
 
             messagesPayload.push({
               role: 'tool',
               tool_call_id: toolCall.id,
               name: 'generate_payment_link',
-              content: JSON.stringify({ success: true, payment_link: paymentLink }),
+              content: JSON.stringify({ success: true, status: 'Payment button sent directly to the customer on WhatsApp.' }),
             })
           } catch (toolErr: any) {
             console.error('[ai openai tool] failed to generate payment link:', toolErr)

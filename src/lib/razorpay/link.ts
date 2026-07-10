@@ -6,7 +6,7 @@ export async function createRazorpayLink(args: {
   conversationId: string
   amount: number
   productName: string
-  deliveryFiles: string[]
+  deliveryFiles: any[]
 }): Promise<string> {
   const db = supabaseAdmin()
   const { data: config } = await db
