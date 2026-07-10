@@ -12,6 +12,7 @@ import {
   Wallet,
   MessageSquare,
   Share2,
+  Sparkles,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -37,6 +38,7 @@ export const SETTINGS_SECTIONS = [
   'canned',
   'api',
   'integrations',
+  'ai-agent',
 ] as const;
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
@@ -65,6 +67,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   canned: { id: 'canned', label: 'Quick replies', icon: MessageSquare, group: 'workspace' },
   api: { id: 'api', label: 'API keys', icon: KeyRound, group: 'workspace' },
   integrations: { id: 'integrations', label: 'Integrations', icon: Share2, group: 'workspace' },
+  'ai-agent': { id: 'ai-agent', label: 'AI Sales Agent', icon: Sparkles, group: 'workspace' },
 };
 
 export const RAIL_GROUPS: { label: string | null; group: SectionMeta['group'] }[] = [

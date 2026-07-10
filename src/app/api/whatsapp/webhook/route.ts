@@ -809,7 +809,7 @@ async function processMessage(
   // the account has enabled it. Awaited inside `after()` (same reason as
   // the webhook dispatch below); `dispatchInboundToAiReply` owns its
   // eligibility gates + try/catch and never throws.
-  if (!flowConsumed && !interactiveReplyId && inboundText.trim()) {
+  if (!flowConsumed && inboundText.trim()) {
     await dispatchInboundToAiReply({
       accountId,
       conversationId: conversation.id,

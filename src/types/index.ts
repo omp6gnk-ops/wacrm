@@ -574,3 +574,34 @@ export interface AutomationLog {
   created_at: string;
   contact?: Contact;
 }
+
+export interface ConversationCustomStatus {
+  id: string;
+  account_id: string;
+  name: string;
+  color: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type InterestLevel = 'hot' | 'warm' | 'cold' | 'not_interested';
+
+export interface AssessmentAction {
+  type: 'tag_added' | 'status_changed' | 'field_updated' | 'qr_sent' | 'handoff';
+  detail: string;
+  timestamp: string;
+}
+
+export interface CustomerAssessment {
+  id: string;
+  account_id: string;
+  conversation_id: string;
+  contact_id: string;
+  interest_level: InterestLevel;
+  collected_data: Record<string, string>;
+  ai_reasoning?: string;
+  actions_taken: AssessmentAction[];
+  created_at: string;
+  updated_at: string;
+  contact?: Contact;
+}

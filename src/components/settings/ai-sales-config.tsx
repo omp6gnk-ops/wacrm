@@ -1,0 +1,939 @@
+'use client';
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
+import { Loader2, Sparkles, CheckCircle2, Trash2, Eye, EyeOff, ShieldCheck, PlayCircle, Settings, HelpCircle, UserCheck, Tag, Info } from 'lucide-react';
+import { useAuth } from '@/hooks/use-auth';
+import { canEditSettings } from '@/lib/auth/roles';
+import { createClient } from '@/lib/supabase/client';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from '@/components/ui/card';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { SettingsPanelHead } from './settings-panel-head';
+import { AiKnowledgeCard } from './ai-knowledge';
+import { AI_PROVIDER_DEFAULT_MODEL } from '@/lib/ai/defaults';
+import type { AiProvider, CollectField } from '@/lib/ai/types';
+import type { Tag as DbTag, ConversationCustomStatus } from '@/types';
+
+const MASKED_KEY = '••••••••••••••••';
+
+const KEY_PLACEHOLDER: Record<AiProvider, string> = {
+  openai: 'sk-...',
+  anthropic: 'sk-ant-...',
+};
+
+export function AiSalesConfig() {
+  const { accountId, accountRole } = useAuth();
+  const canEdit = accountRole ? canEditSettings(accountRole) : false;
+  const supabase = createClient();
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [removing, setRemoving] = useState(false);
+
+  // Connection config
+  const [configured, setConfigured] = useState(false);
+  const [provider, setProvider] = useState<AiProvider>('openai');
+  const [model, setModel] = useState(AI_PROVIDER_DEFAULT_MODEL.openai);
+  const [apiKey, setApiKey] = useState('');
+  const [keyEdited, setKeyEdited] = useState(false);
+  const [showKey, setShowKey] = useState(false);
+  const [hasStoredKey, setHasStoredKey] = useState(false);
+  const [embeddingsKey, setEmbeddingsKey] = useState('');
+  const [embeddingsKeyEdited, setEmbeddingsKeyEdited] = useState(false);
+  const [hasStoredEmbeddingsKey, setHasStoredEmbeddingsKey] = useState(false);
+  const [systemPrompt, setSystemPrompt] = useState('');
+  const [isActive, setIsActive] = useState(false);
+  
+  // Triggers & limits
+  const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
+  const [maxPerConversation, setMaxPerConversation] = useState(15);
+  const [aiTakeoverMinutes, setAiTakeoverMinutes] = useState(5);
+  const [aiReplyLimitResetMinutes, setAiReplyLimitResetMinutes] = useState(240);
+  const [coexistWithAutomations, setCoexistWithAutomations] = useState(true);
+  const [triggerOnButtonReply, setTriggerOnButtonReply] = useState(true);
+
+  // Sales Mode
+  const [salesModeEnabled, setSalesModeEnabled] = useState(false);
+  const [salesSystemPrompt, setSalesSystemPrompt] = useState('');
+  const [collectFields, setCollectFields] = useState<CollectField[]>([]);
+  const [paymentQrUrl, setPaymentQrUrl] = useState('');
+  const [paymentInstructions, setPaymentInstructions] = useState('');
+
+  // Auto-Categorization
+  const [autoCategorizeEnabled, setAutoCategorizeEnabled] = useState(false);
+  const [categorizeAfterReplies, setCategorizeAfterReplies] = useState(3);
+  const [interestedTagId, setInterestedTagId] = useState<string | null>(null);
+  const [notInterestedTagId, setNotInterestedTagId] = useState<string | null>(null);
+  const [interestedStatusId, setInterestedStatusId] = useState<string | null>(null);
+  const [notInterestedStatusId, setNotInterestedStatusId] = useState<string | null>(null);
+
+  // Account tags, custom fields, and lead statuses lists
+  const [accountTags, setAccountTags] = useState<any[]>([]);
+  const [accountCustomFields, setAccountCustomFields] = useState<any[]>([]);
+  const [accountStatuses, setAccountStatuses] = useState<any[]>([]);
+
+  const loadedAccountIdRef = useRef<string | null>(null);
+
+  // Fetch account reference tables (tags, custom fields, lead statuses)
+  const fetchReferenceData = useCallback(async () => {
+    if (!accountId) return;
+    try {
+      // 1. Fetch tags
+      const { data: tags } = await supabase
+        .from('tags')
+        .select('id, name, color')
+        .eq('account_id', accountId)
+        .order('name');
+      setAccountTags(tags || []);
+
+      // 2. Fetch custom fields
+      const { data: fields } = await supabase
+        .from('custom_fields')
+        .select('id, field_name')
+        .eq('account_id', accountId)
+        .order('field_name');
+      setAccountCustomFields(fields || []);
+
+      // 3. Fetch custom statuses
+      const { data: statuses } = await supabase
+        .from('conversation_custom_statuses')
+        .select('id, name, color')
+        .eq('account_id', accountId)
+        .order('name');
+      setAccountStatuses(statuses || []);
+    } catch (err) {
+      console.error('Failed to load settings metadata:', err);
+    }
+  }, [accountId, supabase]);
+
+  const fetchConfig = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/ai/config');
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error ?? 'Failed to load AI configuration');
+        return;
+      }
+      if (data.configured) {
+        setConfigured(true);
+        setProvider(data.provider);
+        setModel(data.model);
+        setSystemPrompt(data.system_prompt ?? '');
+        setIsActive(data.is_active);
+        
+        // Triggers
+        setAutoReplyEnabled(data.auto_reply_enabled);
+        setMaxPerConversation(data.auto_reply_max_per_conversation ?? 15);
+        setAiTakeoverMinutes(data.ai_takeover_minutes ?? 5);
+        setAiReplyLimitResetMinutes(data.ai_reply_limit_reset_minutes ?? 240);
+        setCoexistWithAutomations(data.coexist_with_automations !== false);
+        setTriggerOnButtonReply(data.trigger_on_button_reply !== false);
+
+        // Sales Mode
+        setSalesModeEnabled(data.sales_mode_enabled === true);
+        setSalesSystemPrompt(data.sales_system_prompt ?? '');
+        setCollectFields(data.collect_fields || []);
+        setPaymentQrUrl(data.payment_qr_url ?? '');
+        setPaymentInstructions(data.payment_instructions ?? '');
+
+        // Auto-Categorization
+        setAutoCategorizeEnabled(data.auto_categorize_enabled === true);
+        setCategorizeAfterReplies(data.categorize_after_replies ?? 3);
+        setInterestedTagId(data.interested_tag_id || null);
+        setNotInterestedTagId(data.not_interested_tag_id || null);
+        setInterestedStatusId(data.interested_status_id || null);
+        setNotInterestedStatusId(data.not_interested_status_id || null);
+
+        setHasStoredKey(Boolean(data.has_key));
+        setApiKey(data.has_key ? MASKED_KEY : '');
+        setKeyEdited(false);
+        setHasStoredEmbeddingsKey(Boolean(data.has_embeddings_key));
+        setEmbeddingsKey(data.has_embeddings_key ? MASKED_KEY : '');
+        setEmbeddingsKeyEdited(false);
+      }
+    } catch {
+      toast.error('Failed to load AI configuration');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!accountId || loadedAccountIdRef.current === accountId) return;
+    loadedAccountIdRef.current = accountId;
+    void fetchConfig();
+    void fetchReferenceData();
+  }, [accountId, fetchConfig, fetchReferenceData]);
+
+  const handleProviderChange = (next: AiProvider) => {
+    setProvider(next);
+    const isDefaultModel =
+      model === AI_PROVIDER_DEFAULT_MODEL.openai ||
+      model === AI_PROVIDER_DEFAULT_MODEL.anthropic ||
+      model.trim() === '';
+    if (isDefaultModel) setModel(AI_PROVIDER_DEFAULT_MODEL[next]);
+  };
+
+  const keyPayload = () => (keyEdited ? apiKey.trim() : undefined);
+  const embeddingsKeyPayload = () =>
+    embeddingsKeyEdited ? embeddingsKey.trim() || null : undefined;
+
+  const handleTest = async () => {
+    setTesting(true);
+    try {
+      const res = await fetch('/api/ai/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider,
+          model: model.trim(),
+          api_key: keyPayload(),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success('Connection verified successfully!');
+      } else {
+        toast.error(data.error ?? 'Invalid API key or model.');
+      }
+    } catch {
+      toast.error('API key verification failed.');
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/ai/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider,
+          model: model.trim(),
+          api_key: keyPayload(),
+          embeddings_api_key: embeddingsKeyPayload(),
+          system_prompt: systemPrompt.trim() || null,
+          is_active: isActive,
+          auto_reply_enabled: autoReplyEnabled,
+          auto_reply_max_per_conversation: maxPerConversation,
+          ai_takeover_minutes: aiTakeoverMinutes,
+          ai_reply_limit_reset_minutes: aiReplyLimitResetMinutes,
+          coexist_with_automations: coexistWithAutomations,
+          trigger_on_button_reply: triggerOnButtonReply,
+          sales_mode_enabled: salesModeEnabled,
+          sales_system_prompt: salesSystemPrompt.trim() || null,
+          collect_fields: collectFields,
+          auto_categorize_enabled: autoCategorizeEnabled,
+          categorize_after_replies: categorizeAfterReplies,
+          interested_tag_id: interestedTagId,
+          not_interested_tag_id: notInterestedTagId,
+          interested_status_id: interestedStatusId,
+          not_interested_status_id: notInterestedStatusId,
+          payment_qr_url: paymentQrUrl.trim() || null,
+          payment_instructions: paymentInstructions.trim() || null,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast.success('AI Sales Agent config saved!');
+        setConfigured(true);
+        setKeyEdited(false);
+        setEmbeddingsKeyEdited(false);
+        if (apiKey) setHasStoredKey(true);
+        if (embeddingsKey) setHasStoredEmbeddingsKey(true);
+      } else {
+        toast.error(data.error ?? 'Failed to save configuration.');
+      }
+    } catch {
+      toast.error('An error occurred while saving.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemove = async () => {
+    if (!confirm('Are you sure you want to disable and delete the AI agent configuration?')) return;
+    setRemoving(true);
+    try {
+      const res = await fetch('/api/ai/config', { method: 'DELETE' });
+      if (res.ok) {
+        toast.success('AI Agent configuration removed.');
+        setConfigured(false);
+        setApiKey('');
+        setEmbeddingsKey('');
+        setSystemPrompt('');
+        setIsActive(false);
+        setAutoReplyEnabled(false);
+        setSalesModeEnabled(false);
+        setSalesSystemPrompt('');
+        setCollectFields([]);
+        setPaymentQrUrl('');
+        setPaymentInstructions('');
+        setHasStoredKey(false);
+        setHasStoredEmbeddingsKey(false);
+      } else {
+        toast.error('Failed to remove configuration.');
+      }
+    } catch {
+      toast.error('An error occurred during removal.');
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  const handleToggleCollectField = (fieldKey: string, required: boolean = false) => {
+    const exists = collectFields.some((f) => f.field === fieldKey);
+    if (exists) {
+      setCollectFields(collectFields.filter((f) => f.field !== fieldKey));
+    } else {
+      setCollectFields([...collectFields, { field: fieldKey, required }]);
+    }
+  };
+
+  const handleToggleRequiredField = (fieldKey: string) => {
+    setCollectFields(
+      collectFields.map((f) => (f.field === fieldKey ? { ...f, required: !f.required } : f))
+    );
+  };
+
+  if (loading) {
+    return (
+      <div className="flex h-48 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  const disabled = !canEdit || saving || testing || removing;
+
+  return (
+    <div className="space-y-6">
+      <SettingsPanelHead
+        title="AI Sales Agent"
+        description="Configure your autonomous AI Sales Agent to reply, qualify leads, and close deals via WhatsApp."
+      />
+
+      <Tabs defaultValue="connection" className="w-full">
+        <TabsList className="grid w-full grid-cols-5 bg-muted/50 rounded-xl p-1">
+          <TabsTrigger value="connection" className="rounded-lg py-2 font-medium">Connection</TabsTrigger>
+          <TabsTrigger value="triggers" className="rounded-lg py-2 font-medium">Triggers & Limits</TabsTrigger>
+          <TabsTrigger value="sales" className="rounded-lg py-2 font-medium">Sales Agent</TabsTrigger>
+          <TabsTrigger value="categorization" className="rounded-lg py-2 font-medium">Categorization</TabsTrigger>
+          <TabsTrigger value="kb" className="rounded-lg py-2 font-medium">Knowledge Base</TabsTrigger>
+        </TabsList>
+
+        {/* TAB 1: CONNECTION */}
+        <TabsContent value="connection" className="mt-4 space-y-4">
+          <Card className="border-border/60 shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShieldCheck className="h-5 w-5 text-primary" />
+                LLM Provider Connection
+              </CardTitle>
+              <CardDescription>
+                Bring your own key to connect directly to your chosen AI model.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-2">
+                <Label htmlFor="provider">AI Provider</Label>
+                <Select
+                  disabled={disabled}
+                  value={provider}
+                  onValueChange={(val) => handleProviderChange(val as AiProvider)}
+                >
+                  <SelectTrigger id="provider">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="openai">OpenAI</SelectItem>
+                    <SelectItem value="anthropic">Anthropic (Claude)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="model">Model ID</Label>
+                <Input
+                  id="model"
+                  disabled={disabled}
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  placeholder="e.g. gpt-4o-mini"
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="apiKey" className="flex items-center justify-between">
+                  <span>API Key</span>
+                  {hasStoredKey && !keyEdited && (
+                    <span className="text-[10px] font-semibold text-emerald-500 uppercase tracking-wider flex items-center gap-1">
+                      <CheckCircle2 className="h-3 w-3" /> Key Stored
+                    </span>
+                  )}
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="apiKey"
+                    type={showKey ? 'text' : 'password'}
+                    disabled={disabled}
+                    value={apiKey}
+                    onChange={(e) => {
+                      setApiKey(e.target.value);
+                      setKeyEdited(true);
+                    }}
+                    placeholder={KEY_PLACEHOLDER[provider]}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowKey(!showKey)}
+                    className="absolute right-3 top-2.5 text-muted-foreground hover:text-foreground"
+                  >
+                    {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid gap-2 pt-2">
+                <Label htmlFor="embeddingsKey" className="flex items-center justify-between">
+                  <span>OpenAI Embeddings Key (Optional)</span>
+                  {hasStoredEmbeddingsKey && !embeddingsKeyEdited && (
+                    <span className="text-[10px] font-semibold text-emerald-500 uppercase tracking-wider flex items-center gap-1">
+                      <CheckCircle2 className="h-3 w-3" /> Key Stored
+                    </span>
+                  )}
+                </Label>
+                <Input
+                  id="embeddingsKey"
+                  type="password"
+                  disabled={disabled}
+                  value={embeddingsKey}
+                  onChange={(e) => {
+                    setEmbeddingsKey(e.target.value);
+                    setEmbeddingsKeyEdited(true);
+                  }}
+                  placeholder="sk-..."
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Required only if you use Anthropic chat but want semantic knowledge search (OpenAI text-embedding-3-small).
+                </p>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={disabled || !apiKey}
+                  onClick={handleTest}
+                  className="flex items-center gap-1.5"
+                >
+                  {testing && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Test Connection
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* TAB 2: TRIGGERS & LIMITS */}
+        <TabsContent value="triggers" className="mt-4 space-y-4">
+          <Card className="border-border/60 shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <PlayCircle className="h-5 w-5 text-primary" />
+                Activation Triggers & Limits
+              </CardTitle>
+              <CardDescription>
+                Define when the AI steps in and control its response limits.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="flex items-center justify-between border-b border-border/40 pb-4">
+                <div className="space-y-0.5 pr-4">
+                  <Label className="text-base font-semibold">Enable AI Assistant Master Switch</Label>
+                  <p className="text-[13px] text-muted-foreground">
+                    Enables the AI engine for manual drafting in the inbox composer.
+                  </p>
+                </div>
+                <Switch
+                  disabled={disabled}
+                  checked={isActive}
+                  onCheckedChange={setIsActive}
+                />
+              </div>
+
+              <div className="flex items-center justify-between border-b border-border/40 pb-4">
+                <div className="space-y-0.5 pr-4">
+                  <Label className="text-base font-semibold">Auto-Reply to Inbound Messages</Label>
+                  <p className="text-[13px] text-muted-foreground">
+                    Let the AI reply automatically to customers when eligible.
+                  </p>
+                </div>
+                <Switch
+                  disabled={disabled}
+                  checked={autoReplyEnabled}
+                  onCheckedChange={setAutoReplyEnabled}
+                />
+              </div>
+
+              <div className="flex items-center justify-between border-b border-border/40 pb-4">
+                <div className="space-y-0.5 pr-4">
+                  <Label className="text-base font-semibold">Work alongside Automations</Label>
+                  <p className="text-[13px] text-muted-foreground">
+                    Allow AI to reply even if active Message/Keyword automations exist for the workspace.
+                  </p>
+                </div>
+                <Switch
+                  disabled={disabled || !autoReplyEnabled}
+                  checked={coexistWithAutomations}
+                  onCheckedChange={setCoexistWithAutomations}
+                />
+              </div>
+
+              <div className="flex items-center justify-between border-b border-border/40 pb-4">
+                <div className="space-y-0.5 pr-4">
+                  <Label className="text-base font-semibold">Trigger on Campaign Button Tap</Label>
+                  <p className="text-[13px] text-muted-foreground">
+                    Allow AI to take over when a customer clicks a quick-reply button from a campaign broadcast.
+                  </p>
+                </div>
+                <Switch
+                  disabled={disabled || !autoReplyEnabled}
+                  checked={triggerOnButtonReply}
+                  onCheckedChange={setTriggerOnButtonReply}
+                />
+              </div>
+
+              <div className="grid gap-2 border-b border-border/40 pb-4">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="takeover" className="font-semibold">Human Agent Takeover Delay</Label>
+                  <span className="text-sm font-medium bg-secondary px-2.5 py-0.5 rounded-full text-secondary-foreground">{aiTakeoverMinutes} minutes</span>
+                </div>
+                <input
+                  id="takeover"
+                  type="range"
+                  min="0"
+                  max="60"
+                  disabled={disabled || !autoReplyEnabled}
+                  value={aiTakeoverMinutes}
+                  onChange={(e) => setAiTakeoverMinutes(Number(e.target.value))}
+                  className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-secondary"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  If a human agent replied before, AI will wait this long for a human response before taking over. Set to 0 for instant AI reply on all messages.
+                </p>
+              </div>
+
+              <div className="grid gap-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="maxReplies" className="font-semibold">Max Auto-Replies per Conversation</Label>
+                  <span className="text-sm font-medium bg-secondary px-2.5 py-0.5 rounded-full text-secondary-foreground">{maxPerConversation} replies</span>
+                </div>
+                <input
+                  id="maxReplies"
+                  type="range"
+                  min="1"
+                  max="50"
+                  disabled={disabled || !autoReplyEnabled}
+                  value={maxPerConversation}
+                  onChange={(e) => setMaxPerConversation(Number(e.target.value))}
+                  className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-secondary"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  The AI agent will stand down after this many responses until a human agent replies to reset the limit.
+                </p>
+              </div>
+
+              <div className="grid gap-2 pt-2 border-t border-border/40 mt-4">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="replyLimitReset" className="font-semibold">Auto-Reset Reply Limit Cooldown</Label>
+                  <span className="text-sm font-semibold bg-secondary px-2.5 py-0.5 rounded-full text-secondary-foreground text-brand-500">
+                    {aiReplyLimitResetMinutes >= 60 
+                      ? `${Math.floor(aiReplyLimitResetMinutes / 60)}h ${aiReplyLimitResetMinutes % 60}m` 
+                      : `${aiReplyLimitResetMinutes} minutes`}
+                  </span>
+                </div>
+                <input
+                  id="replyLimitReset"
+                  type="range"
+                  min="5"
+                  max="1440"
+                  step="5"
+                  disabled={disabled || !autoReplyEnabled}
+                  value={aiReplyLimitResetMinutes}
+                  onChange={(e) => setAiReplyLimitResetMinutes(Number(e.target.value))}
+                  className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-secondary"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  If the conversation is inactive for this long, the reply limit counter resets back to 0. (Set to 240m for 4 hours, or 1440m for 24 hours).
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* TAB 3: SALES AGENT */}
+        <TabsContent value="sales" className="mt-4 space-y-4">
+          <Card className="border-border/60 shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-primary" />
+                AI Sales Agent Configuration
+              </CardTitle>
+              <CardDescription>
+                Enable Sales Mode, configure data to collect, and payment detail messages.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="flex items-center justify-between border-b border-border/40 pb-4">
+                <div className="space-y-0.5 pr-4">
+                  <Label className="text-base font-semibold">Enable Sales Mode</Label>
+                  <p className="text-[13px] text-muted-foreground">
+                    Configures the LLM to actively pitch products, qualify interest, collect details, and send payment information.
+                  </p>
+                </div>
+                <Switch
+                  disabled={disabled}
+                  checked={salesModeEnabled}
+                  onCheckedChange={setSalesModeEnabled}
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="systemPrompt">General System Prompt & Tone</Label>
+                <Textarea
+                  id="systemPrompt"
+                  disabled={disabled}
+                  value={systemPrompt}
+                  onChange={(e) => setSystemPrompt(e.target.value)}
+                  placeholder="Provide context about your company, tone guidelines, and details."
+                  className="min-h-[100px]"
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="salesSystemPrompt">Specific Sales Pitch / Script (Optional)</Label>
+                <Textarea
+                  id="salesSystemPrompt"
+                  disabled={disabled || !salesModeEnabled}
+                  value={salesSystemPrompt}
+                  onChange={(e) => setSalesSystemPrompt(e.target.value)}
+                  placeholder="Instruct the AI on key sales objectives, target questions to ask, and standard responses."
+                  className="min-h-[100px]"
+                />
+              </div>
+
+              {/* FIELDS TO COLLECT */}
+              <div className="grid gap-2 border-t border-border/40 pt-4">
+                <Label className="font-semibold flex items-center gap-1.5">
+                  <UserCheck className="h-4 w-4 text-muted-foreground" />
+                  Customer Information to Collect
+                </Label>
+                <p className="text-[12px] text-muted-foreground pb-2">
+                  The AI agent will gently ask for these details in conversation and automatically populate custom fields in the CRM.
+                </p>
+
+                <div className="grid grid-cols-2 gap-3 max-h-[180px] overflow-y-auto border border-border/60 rounded-xl p-3 bg-muted/20">
+                  {/* Standard fields */}
+                  {['name', 'email', 'company'].map((fieldKey) => {
+                    const isChecked = collectFields.some((f) => f.field === fieldKey);
+                    const isRequired = collectFields.find((f) => f.field === fieldKey)?.required === true;
+                    return (
+                      <div key={fieldKey} className="flex items-center justify-between border-b border-border/20 pb-2 last:border-0 last:pb-0">
+                        <div className="flex items-center gap-2">
+                          <Checkbox
+                            id={`field-${fieldKey}`}
+                            disabled={disabled || !salesModeEnabled}
+                            checked={isChecked}
+                            onCheckedChange={() => handleToggleCollectField(fieldKey)}
+                          />
+                          <Label htmlFor={`field-${fieldKey}`} className="cursor-pointer capitalize text-[13px]">{fieldKey}</Label>
+                        </div>
+                        {isChecked && (
+                          <div className="flex items-center gap-1">
+                            <Checkbox
+                              id={`req-${fieldKey}`}
+                              disabled={disabled || !salesModeEnabled}
+                              checked={isRequired}
+                              onCheckedChange={() => handleToggleRequiredField(fieldKey)}
+                            />
+                            <Label htmlFor={`req-${fieldKey}`} className="text-[11px] text-muted-foreground cursor-pointer">Required</Label>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Custom fields loaded from database */}
+                  {accountCustomFields.map((field) => {
+                    const fieldKey = `custom:${field.id}`;
+                    const isChecked = collectFields.some((f) => f.field === fieldKey);
+                    const isRequired = collectFields.find((f) => f.field === fieldKey)?.required === true;
+                    return (
+                      <div key={field.id} className="flex items-center justify-between border-b border-border/20 pb-2 last:border-0 last:pb-0">
+                        <div className="flex items-center gap-2 max-w-[65%] truncate">
+                          <Checkbox
+                            id={`field-${field.id}`}
+                            disabled={disabled || !salesModeEnabled}
+                            checked={isChecked}
+                            onCheckedChange={() => handleToggleCollectField(fieldKey)}
+                          />
+                          <Label htmlFor={`field-${field.id}`} className="cursor-pointer truncate text-[13px]" title={field.field_name}>{field.field_name}</Label>
+                        </div>
+                        {isChecked && (
+                          <div className="flex items-center gap-1">
+                            <Checkbox
+                              id={`req-${field.id}`}
+                              disabled={disabled || !salesModeEnabled}
+                              checked={isRequired}
+                              onCheckedChange={() => handleToggleRequiredField(fieldKey)}
+                            />
+                            <Label htmlFor={`req-${field.id}`} className="text-[11px] text-muted-foreground cursor-pointer">Required</Label>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* PAYMENT & QR SECTION */}
+              <div className="grid gap-4 border-t border-border/40 pt-4">
+                <Label className="font-semibold flex items-center gap-1.5">
+                  <Info className="h-4 w-4 text-muted-foreground" />
+                  QR Payment Configuration
+                </Label>
+                <div className="grid gap-2">
+                  <Label htmlFor="paymentQrUrl">UPI / Payment QR Image Link</Label>
+                  <Input
+                    id="paymentQrUrl"
+                    disabled={disabled || !salesModeEnabled}
+                    value={paymentQrUrl}
+                    onChange={(e) => setPaymentQrUrl(e.target.value)}
+                    placeholder="https://yourdomain.com/static/upi_qr.png"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Public link to your payment QR code. When the AI determines the customer is ready to buy, it will send this image.
+                  </p>
+                  {paymentQrUrl && (
+                    <div className="mt-2 border border-border/80 rounded-xl p-2 max-w-[120px] bg-muted/40">
+                      <img src={paymentQrUrl} alt="QR Code Preview" className="h-24 w-24 object-contain mx-auto" onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }} />
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="paymentInstructions">Payment Instructions Text</Label>
+                  <Textarea
+                    id="paymentInstructions"
+                    disabled={disabled || !salesModeEnabled}
+                    value={paymentInstructions}
+                    onChange={(e) => setPaymentInstructions(e.target.value)}
+                    placeholder="e.g. Please transfer ₹999 to UPI ID: store@upi and reply with a screenshot."
+                    className="min-h-[70px]"
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* TAB 4: AUTO-CATEGORIZATION */}
+        <TabsContent value="categorization" className="mt-4 space-y-4">
+          <Card className="border-border/60 shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Tag className="h-5 w-5 text-primary" />
+                Lead Status & Tag Mapping
+              </CardTitle>
+              <CardDescription>
+                Instruct the AI to tag contacts and update lead status dynamically based on conversation interest.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="flex items-center justify-between border-b border-border/40 pb-4">
+                <div className="space-y-0.5 pr-4">
+                  <Label className="text-base font-semibold">Enable Dynamic Auto-Categorization</Label>
+                  <p className="text-[13px] text-muted-foreground">
+                    Evaluate conversations after a few turns to categorize and tag the customer automatically.
+                  </p>
+                </div>
+                <Switch
+                  disabled={disabled}
+                  checked={autoCategorizeEnabled}
+                  onCheckedChange={setAutoCategorizeEnabled}
+                />
+              </div>
+
+              <div className="grid gap-2 border-b border-border/40 pb-4">
+                <Label htmlFor="categorizeAfter">Assess Interest After N AI Replies</Label>
+                <Input
+                  id="categorizeAfter"
+                  type="number"
+                  disabled={disabled || !autoCategorizeEnabled}
+                  value={categorizeAfterReplies}
+                  min={1}
+                  max={20}
+                  onChange={(e) => setCategorizeAfterReplies(Number(e.target.value))}
+                  className="w-32"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  The AI runs the interest analysis LLM call after this number of responses to decide tags and status.
+                </p>
+              </div>
+
+              {/* INTERESTED TARGETS */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="interestedTag">Interested Customer Tag</Label>
+                  <Select
+                    disabled={disabled || !autoCategorizeEnabled}
+                    value={interestedTagId || 'none'}
+                    onValueChange={(val) => setInterestedTagId(val === 'none' ? null : val)}
+                  >
+                    <SelectTrigger id="interestedTag">
+                      <SelectValue placeholder="Select Tag" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None</SelectItem>
+                      {accountTags.map((tag) => (
+                        <SelectItem key={tag.id} value={tag.id}>{tag.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="interestedStatus">Interested Lead Status</Label>
+                  <Select
+                    disabled={disabled || !autoCategorizeEnabled}
+                    value={interestedStatusId || 'none'}
+                    onValueChange={(val) => setInterestedStatusId(val === 'none' ? null : val)}
+                  >
+                    <SelectTrigger id="interestedStatus">
+                      <SelectValue placeholder="Select Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None</SelectItem>
+                      {accountStatuses.map((status) => (
+                        <SelectItem key={status.id} value={status.id}>{status.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* NOT INTERESTED TARGETS */}
+              <div className="grid grid-cols-2 gap-4 border-t border-border/40 pt-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="notInterestedTag">Not Interested Customer Tag</Label>
+                  <Select
+                    disabled={disabled || !autoCategorizeEnabled}
+                    value={notInterestedTagId || 'none'}
+                    onValueChange={(val) => setNotInterestedTagId(val === 'none' ? null : val)}
+                  >
+                    <SelectTrigger id="notInterestedTag">
+                      <SelectValue placeholder="Select Tag" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None</SelectItem>
+                      {accountTags.map((tag) => (
+                        <SelectItem key={tag.id} value={tag.id}>{tag.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="notInterestedStatus">Not Interested Lead Status</Label>
+                  <Select
+                    disabled={disabled || !autoCategorizeEnabled}
+                    value={notInterestedStatusId || 'none'}
+                    onValueChange={(val) => setNotInterestedStatusId(val === 'none' ? null : val)}
+                  >
+                    <SelectTrigger id="notInterestedStatus">
+                      <SelectValue placeholder="Select Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None</SelectItem>
+                      {accountStatuses.map((status) => (
+                        <SelectItem key={status.id} value={status.id}>{status.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* TAB 5: KNOWLEDGE BASE */}
+        <TabsContent value="kb" className="mt-4 space-y-4">
+          <AiKnowledgeCard
+            accountId={accountId}
+            canEdit={canEdit}
+            hasEmbeddingsKey={
+              embeddingsKeyEdited
+                ? embeddingsKey.trim().length > 0
+                : hasStoredEmbeddingsKey
+            }
+          />
+        </TabsContent>
+      </Tabs>
+
+      {/* SAVE & DELETE PANEL */}
+      <div className="flex items-center justify-between pt-4 border-t border-border/65">
+        {configured ? (
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={disabled}
+            onClick={handleRemove}
+            className="flex items-center gap-1.5"
+          >
+            {removing && <Loader2 className="h-4 w-4 animate-spin" />}
+            Disable & Remove AI Agent
+          </Button>
+        ) : (
+          <div className="text-sm text-muted-foreground flex items-center gap-1.5">
+            <Info className="h-4 w-4" /> AI sales agent is not configured yet.
+          </div>
+        )}
+
+        <Button
+          type="button"
+          disabled={disabled || (keyEdited && !apiKey.trim())}
+          onClick={handleSave}
+          className="flex items-center gap-1.5 shadow-sm px-6 rounded-lg"
+        >
+          {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+          Save Changes
+        </Button>
+      </div>
+    </div>
+  );
+}

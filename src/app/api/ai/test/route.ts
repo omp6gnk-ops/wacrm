@@ -73,7 +73,7 @@ export async function POST(request: Request) {
         autoReplyMaxPerConversation: 3,
         aiTakeoverMinutes: 5,
         embeddingsApiKey: null,
-      })
+      } as any)
     } catch (err) {
       if (err instanceof AiError) {
         return NextResponse.json(

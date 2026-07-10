@@ -54,8 +54,11 @@ export function buildSystemPrompt(args: {
   mode: 'draft' | 'auto_reply'
   /** Knowledge-base excerpts retrieved for the current question. */
   knowledge?: string[]
+  salesModeEnabled?: boolean
+  salesSystemPrompt?: string | null
+  collectFields?: any[]
 }): string {
-  const { userPrompt, mode, knowledge } = args
+  const { userPrompt, mode, knowledge, salesModeEnabled, salesSystemPrompt, collectFields } = args
   const parts: string[] = [
     'You are a customer-messaging assistant for a business that uses a WhatsApp CRM. ' +
       'You are shown the recent WhatsApp conversation between the business (assistant) and a customer (user). ' +
@@ -70,6 +73,24 @@ export function buildSystemPrompt(args: {
     parts.push(
       `You are replying automatically with no human in the loop. If you cannot confidently and safely help — the customer explicitly asks for a human, is upset or complaining, or the request needs information you do not have — reply with exactly ${HANDOFF_SENTINEL} and nothing else. A human agent will then take over. Prefer handing off over guessing.`,
     )
+  }
+
+  if (salesModeEnabled) {
+    const fieldNames = (collectFields || [])
+      .map((f) => f.field.startsWith('custom:') ? `custom field: ${f.field.substring(7)}` : f.field)
+      .join(', ')
+
+    let salesInst = 'Sales Agent Mode is active. Your main objective is to qualify the customer\'s interest, answer product/service questions, collect necessary details, and guide them towards completing a purchase.\n'
+    if (fieldNames) {
+      salesInst += `Please gently collect the following details during the conversation if the customer has not provided them yet: [${fieldNames}]. Do not ask for all details at once; ask for them one by one, keeping the conversation natural.\n`
+    }
+    salesInst += 'When the customer is ready to buy, pay, or subscribe, explicitly let them know you are providing the payment details/QR code.'
+    
+    parts.push(salesInst)
+
+    if (salesSystemPrompt && salesSystemPrompt.trim()) {
+      parts.push(`Additional Sales Instructions:\n${salesSystemPrompt.trim()}`)
+    }
   }
 
   if (userPrompt && userPrompt.trim()) {

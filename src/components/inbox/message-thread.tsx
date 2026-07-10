@@ -192,6 +192,9 @@ export function MessageThread({
   const { getPresence, getRow, now } = usePresence();
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const lastConvIdRef = useRef<string | null>(null);
+  const lastMsgCountRef = useRef(0);
+  const fetchConvIdRef = useRef<string | null>(null);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [reactions, setReactions] = useState<MessageReaction[]>([]);
@@ -295,7 +298,12 @@ export function MessageThread({
     let cancelled = false;
 
     (async () => {
-      setLoading(true);
+      const isNewConv = fetchConvIdRef.current !== conversationId;
+      fetchConvIdRef.current = conversationId;
+
+      if (isNewConv) {
+        setLoading(true);
+      }
 
       const { data, error } = await supabase
         .from("messages")
@@ -311,7 +319,9 @@ export function MessageThread({
         onMessagesLoadedRef.current(data ?? []);
       }
 
-      if (!cancelled) setLoading(false);
+      if (isNewConv && !cancelled) {
+        setLoading(false);
+      }
     })();
 
     return () => {
@@ -457,9 +467,18 @@ export function MessageThread({
   useEffect(() => {
     if (scrollRef.current) {
       const el = scrollRef.current;
-      el.scrollTop = el.scrollHeight;
+      const isNewConv = lastConvIdRef.current !== conversationId;
+      lastConvIdRef.current = conversationId ?? null;
+
+      const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+      const msgCountIncreased = messages.length > lastMsgCountRef.current;
+      lastMsgCountRef.current = messages.length;
+
+      if (isNewConv || (msgCountIncreased && isNearBottom)) {
+        el.scrollTop = el.scrollHeight;
+      }
     }
-  }, [messages]);
+  }, [messages, conversationId]);
 
   const handleSend = useCallback(
     async (text: string, replyToId?: string) => {
@@ -516,6 +535,45 @@ export function MessageThread({
       }
     },
     [conversation, onNewMessage, onUpdateMessage]
+  );
+
+  const handleRetryMessage = useCallback(
+    async (msg: Message) => {
+      onUpdateMessage(msg.id, { status: "sending" });
+
+      try {
+        const res = await fetch("/api/whatsapp/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversation_id: msg.conversation_id,
+            message_type: msg.content_type,
+            content_text: msg.content_text,
+            media_url: msg.media_url || undefined,
+            filename: (msg as any).filename || undefined,
+            reply_to_message_id: msg.reply_to_message_id,
+          }),
+        });
+
+        const payload = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          const reason = payload?.error || `HTTP ${res.status}`;
+          console.error("Failed to send message:", reason);
+          toast.error(`Failed to send: ${reason}`);
+          onUpdateMessage(msg.id, { status: "failed" });
+          return;
+        }
+
+        onUpdateMessage(msg.id, { status: "sent" });
+      } catch (err) {
+        console.error("Failed to send message:", err);
+        const reason = err instanceof Error ? err.message : "network error";
+        toast.error(`Failed to send: ${reason}`);
+        onUpdateMessage(msg.id, { status: "failed" });
+      }
+    },
+    [onUpdateMessage]
   );
 
   const handleSendMedia = useCallback(
@@ -1196,6 +1254,7 @@ export function MessageThread({
                           reactions={msgReactions}
                           currentUserId={user?.id}
                           onToggleReaction={handlePillToggle}
+                          onRetry={() => handleRetryMessage(msg)}
                         />
                       </MessageActions>
                     );

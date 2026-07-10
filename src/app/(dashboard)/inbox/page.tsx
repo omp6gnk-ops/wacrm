@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -37,6 +37,7 @@ export default function InboxPage() {
     useState<Conversation | null>(null);
   const [activeContact, setActiveContact] = useState<Contact | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [pendingMessages, setPendingMessages] = useState<Record<string, Message[]>>({});
   const [whatsappConnected, setWhatsappConnected] = useState<boolean | null>(
     null
   );
@@ -207,6 +208,20 @@ export default function InboxPage() {
       const newMsg = event.new;
 
       if (event.eventType === "INSERT") {
+        // Clear matching pending message from state
+        setPendingMessages((prev) => {
+          const list = prev[newMsg.conversation_id] || [];
+          const updated = list.filter((p) => {
+            // Match by text content and sender type
+            const isMatch =
+              p.content_text === newMsg.content_text &&
+              newMsg.sender_type === "agent" &&
+              Math.abs(new Date(p.created_at).getTime() - new Date(newMsg.created_at).getTime()) < 60000;
+            return !isMatch;
+          });
+          return { ...prev, [newMsg.conversation_id]: updated };
+        });
+
         // Add to messages if it belongs to active conversation
         if (
           activeConversation &&
@@ -491,15 +506,42 @@ export default function InboxPage() {
   }, [router]);
 
 
-  const handleMessagesLoaded = useCallback((loaded: Message[]) => {
+  const handleMessagesLoaded = useCallback((loaded: Message[], conversationId: string) => {
     setMessages(loaded);
+    setPendingMessages((prev) => {
+      const list = prev[conversationId] || [];
+      const stillPending = list.filter((p) => {
+        if (p.status === "failed") return true;
+        if (
+          p.status === "sending" &&
+          !loaded.some(
+            (m) =>
+              m.content_text === p.content_text &&
+              m.sender_type === "agent" &&
+              Math.abs(new Date(m.created_at).getTime() - new Date(p.created_at).getTime()) < 60000
+          )
+        ) {
+          return true;
+        }
+        return false;
+      });
+      return { ...prev, [conversationId]: stillPending };
+    });
   }, []);
 
   const handleNewMessage = useCallback((msg: Message) => {
-    setMessages((prev) => {
-      if (prev.some((m) => m.id === msg.id)) return prev;
-      return [...prev, msg];
-    });
+    if (msg.id.startsWith("temp-")) {
+      setPendingMessages((prev) => {
+        const list = prev[msg.conversation_id] || [];
+        if (list.some((m) => m.id === msg.id)) return prev;
+        return { ...prev, [msg.conversation_id]: [...list, msg] };
+      });
+    } else {
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        return [...prev, msg];
+      });
+    }
   }, []);
 
   const handleUpdateMessage = useCallback(
@@ -507,6 +549,20 @@ export default function InboxPage() {
       setMessages((prev) =>
         prev.map((m) => (m.id === id ? { ...m, ...updates } : m))
       );
+      setPendingMessages((prev) => {
+        const next = { ...prev };
+        let updatedAny = false;
+        for (const convId in next) {
+          const list = next[convId] || [];
+          if (list.some((m) => m.id === id)) {
+            next[convId] = list.map((m) =>
+              m.id === id ? { ...m, ...updates } : m
+            );
+            updatedAny = true;
+          }
+        }
+        return updatedAny ? next : prev;
+      });
     },
     []
   );
@@ -562,6 +618,27 @@ export default function InboxPage() {
   // before, unchanged.
   const hasActiveConv = !!activeConversation;
 
+  const activePending = activeConversation ? (pendingMessages[activeConversation.id] || []) : [];
+  const combinedMessages = useMemo(() => {
+    const dbIds = new Set(messages.map((m) => m.id));
+    const filteredPending = activePending.filter((p) => {
+      if (dbIds.has(p.id)) return false;
+      if (
+        p.status === "sent" &&
+        messages.some(
+          (m) =>
+            m.content_text === p.content_text &&
+            m.sender_type === "agent" &&
+            Math.abs(new Date(m.created_at).getTime() - new Date(p.created_at).getTime()) < 60000
+        )
+      ) {
+        return false;
+      }
+      return true;
+    });
+    return [...messages, ...filteredPending];
+  }, [messages, activePending]);
+
   return (
     <div className="-m-4 flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden sm:-m-6">
       {/* WhatsApp connection banner — in the flex column, not absolute,
@@ -615,8 +692,8 @@ export default function InboxPage() {
           <MessageThread
             conversation={activeConversation}
             contact={activeContact}
-            messages={messages}
-            onMessagesLoaded={handleMessagesLoaded}
+            messages={combinedMessages}
+            onMessagesLoaded={(loaded) => handleMessagesLoaded(loaded, activeConversation?.id || "")}
             onNewMessage={handleNewMessage}
             onUpdateMessage={handleUpdateMessage}
             onStatusChange={handleStatusChange}

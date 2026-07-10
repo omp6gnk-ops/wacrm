@@ -100,6 +100,9 @@ export async function POST(request: Request) {
       userPrompt: config.systemPrompt,
       mode: 'draft',
       knowledge,
+      salesModeEnabled: config.salesModeEnabled,
+      salesSystemPrompt: config.salesSystemPrompt,
+      collectFields: config.collectFields,
     })
 
     const { text } = await generateReply({ config, systemPrompt, messages })

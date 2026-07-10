@@ -30,7 +30,10 @@ export async function GET() {
       // `api_key` is selected only to derive `has_key` — it is stripped
       // out below and never returned to the client.
       .select(
-        'provider, model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, ai_takeover_minutes, api_key, embeddings_api_key',
+        'provider, model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, ai_takeover_minutes, ai_reply_limit_reset_minutes, api_key, embeddings_api_key, ' +
+        'coexist_with_automations, trigger_on_button_reply, sales_mode_enabled, sales_system_prompt, collect_fields, ' +
+        'auto_categorize_enabled, categorize_after_replies, interested_tag_id, not_interested_tag_id, interested_status_id, not_interested_status_id, ' +
+        'payment_qr_url, payment_instructions',
       )
       .eq('account_id', accountId)
       .maybeSingle()
@@ -46,7 +49,7 @@ export async function GET() {
     if (!data) return NextResponse.json({ configured: false })
     // The keys are selected only to derive the has_* flags; neither is
     // returned to the client.
-    const { api_key, embeddings_api_key, ...safe } = data
+    const { api_key, embeddings_api_key, ...safe } = data as any
     return NextResponse.json({
       configured: true,
       has_key: !!api_key,
@@ -93,11 +96,15 @@ export async function POST(request: Request) {
 
     let maxPer = Number(body.auto_reply_max_per_conversation)
     if (!Number.isFinite(maxPer)) maxPer = 3
-    maxPer = Math.min(20, Math.max(1, Math.floor(maxPer)))
+    maxPer = Math.min(50, Math.max(1, Math.floor(maxPer)))
 
     let takeoverMin = Number(body.ai_takeover_minutes)
     if (!Number.isFinite(takeoverMin)) takeoverMin = 5
     takeoverMin = Math.min(60, Math.max(0, Math.floor(takeoverMin)))
+
+    let resetMin = Number(body.ai_reply_limit_reset_minutes)
+    if (!Number.isFinite(resetMin)) resetMin = 240
+    resetMin = Math.max(1, Math.floor(resetMin))
 
     const rawKey = typeof body.api_key === 'string' ? body.api_key.trim() : ''
 
@@ -147,12 +154,25 @@ export async function POST(request: Request) {
           model,
           apiKey: apiKeyPlain,
           systemPrompt,
-          isActive,
+          isActive: isActive,
           autoReplyEnabled,
           autoReplyMaxPerConversation: maxPer,
           aiTakeoverMinutes: takeoverMin,
           embeddingsApiKey: null,
-        })
+          coexistWithAutomations: body.coexist_with_automations !== false,
+          triggerOnButtonReply: body.trigger_on_button_reply !== false,
+          salesModeEnabled: body.sales_mode_enabled === true,
+          salesSystemPrompt: body.sales_system_prompt || null,
+          collectFields: body.collect_fields || [],
+          autoCategorizeEnabled: body.auto_categorize_enabled === true,
+          categorizeAfterReplies: body.categorize_after_replies || 3,
+          interestedTagId: body.interested_tag_id || null,
+          notInterestedTagId: body.not_interested_tag_id || null,
+          interestedStatusId: body.interested_status_id || null,
+          notInterestedStatusId: body.not_interested_status_id || null,
+          paymentQrUrl: body.payment_qr_url || null,
+          paymentInstructions: body.payment_instructions || null,
+        } as any)
       } catch (err) {
         if (err instanceof AiError) {
           return NextResponse.json(
@@ -183,6 +203,30 @@ export async function POST(request: Request) {
     }
 
     const encryptedKey = rawKey ? encrypt(rawKey) : null
+
+    // Parse new settings fields
+    const coexistWithAutomations = body.coexist_with_automations !== false
+    const triggerOnButtonReply = body.trigger_on_button_reply !== false
+    
+    const salesModeEnabled = body.sales_mode_enabled === true
+    const salesSystemPrompt = typeof body.sales_system_prompt === 'string' && body.sales_system_prompt.trim()
+      ? body.sales_system_prompt.trim()
+      : null
+    const collectFields = Array.isArray(body.collect_fields) ? body.collect_fields : []
+
+    const autoCategorizeEnabled = body.auto_categorize_enabled === true
+    let categorizeAfterReplies = Number(body.categorize_after_replies)
+    if (!Number.isFinite(categorizeAfterReplies)) categorizeAfterReplies = 3
+    categorizeAfterReplies = Math.min(20, Math.max(1, Math.floor(categorizeAfterReplies)))
+
+    const interestedTagId = typeof body.interested_tag_id === 'string' && body.interested_tag_id.trim() ? body.interested_tag_id.trim() : null
+    const notInterestedTagId = typeof body.not_interested_tag_id === 'string' && body.not_interested_tag_id.trim() ? body.not_interested_tag_id.trim() : null
+    const interestedStatusId = typeof body.interested_status_id === 'string' && body.interested_status_id.trim() ? body.interested_status_id.trim() : null
+    const notInterestedStatusId = typeof body.not_interested_status_id === 'string' && body.not_interested_status_id.trim() ? body.not_interested_status_id.trim() : null
+
+    const paymentQrUrl = typeof body.payment_qr_url === 'string' && body.payment_qr_url.trim() ? body.payment_qr_url.trim() : null
+    const paymentInstructions = typeof body.payment_instructions === 'string' && body.payment_instructions.trim() ? body.payment_instructions.trim() : null
+
     const shared: Record<string, unknown> = {
       provider,
       model,
@@ -191,6 +235,20 @@ export async function POST(request: Request) {
       auto_reply_enabled: autoReplyEnabled,
       auto_reply_max_per_conversation: maxPer,
       ai_takeover_minutes: takeoverMin,
+      ai_reply_limit_reset_minutes: resetMin,
+      coexist_with_automations: coexistWithAutomations,
+      trigger_on_button_reply: triggerOnButtonReply,
+      sales_mode_enabled: salesModeEnabled,
+      sales_system_prompt: salesSystemPrompt,
+      collect_fields: collectFields,
+      auto_categorize_enabled: autoCategorizeEnabled,
+      categorize_after_replies: categorizeAfterReplies,
+      interested_tag_id: interestedTagId,
+      not_interested_tag_id: notInterestedTagId,
+      interested_status_id: interestedStatusId,
+      not_interested_status_id: notInterestedStatusId,
+      payment_qr_url: paymentQrUrl,
+      payment_instructions: paymentInstructions,
     }
     if (rawEmbeddingsKey) {
       shared.embeddings_api_key = encrypt(rawEmbeddingsKey)

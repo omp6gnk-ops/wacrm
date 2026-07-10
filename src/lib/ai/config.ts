@@ -12,10 +12,24 @@ interface AiConfigRow {
   auto_reply_max_per_conversation: number
   ai_takeover_minutes: number
   embeddings_api_key: string | null
+  coexist_with_automations: boolean
+  trigger_on_button_reply: boolean
+  sales_mode_enabled: boolean
+  sales_system_prompt: string | null
+  collect_fields: any
+  auto_categorize_enabled: boolean
+  categorize_after_replies: number
+  interested_tag_id: string | null
+  not_interested_tag_id: string | null
+  interested_status_id: string | null
+  not_interested_status_id: string | null
+  payment_qr_url: string | null
+  payment_instructions: string | null
+  ai_reply_limit_reset_minutes: number
 }
 
 const CONFIG_COLUMNS =
-  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, ai_takeover_minutes, embeddings_api_key'
+  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, ai_takeover_minutes, ai_reply_limit_reset_minutes, embeddings_api_key, coexist_with_automations, trigger_on_button_reply, sales_mode_enabled, sales_system_prompt, collect_fields, auto_categorize_enabled, categorize_after_replies, interested_tag_id, not_interested_tag_id, interested_status_id, not_interested_status_id, payment_qr_url, payment_instructions'
 
 /**
  * Load and decrypt the account's AI config for *use* (draft or
@@ -32,55 +46,69 @@ export async function loadAiConfig(
   db: SupabaseClient,
   accountId: string,
   opts: { requireActive?: boolean } = {},
-): Promise<AiConfig | null> {
-  const { requireActive = true } = opts
-  const { data, error } = await db
-    .from('ai_configs')
-    .select(CONFIG_COLUMNS)
-    .eq('account_id', accountId)
-    .maybeSingle()
-
-  if (error) throw error
-  if (!data) return null
-
-  const row = data as AiConfigRow
-  // The Playground passes requireActive:false so an admin can test the
-  // agent before flipping the master switch on.
-  if (requireActive && !row.is_active) return null
-  // Defensive: the column is NOT NULL, but a partial write / manual DB
-  // edit could leave it empty. Treat a missing key as "not configured"
-  // rather than letting decrypt() throw on null.
-  if (!row.api_key) return null
-
-  // The embeddings key is optional and independent of the chat key —
-  // a corrupt/undecryptable one should downgrade to lexical KB, not
-  // take down draft/auto-reply, so decrypt failures are swallowed here.
-  let embeddingsApiKey: string | null = null
-  if (row.embeddings_api_key) {
-    try {
-      embeddingsApiKey = decrypt(row.embeddings_api_key)
-    } catch {
-      // Not silent — a rotated/mismatched ENCRYPTION_KEY here means
-      // semantic search quietly stops working, so leave a breadcrumb.
-      console.error(
-        `[ai config] embeddings key for account ${accountId} could not be decrypted — check ENCRYPTION_KEY; semantic search is disabled until it is re-entered.`,
-      )
-      embeddingsApiKey = null
-    }
-  }
-
-  return {
-    provider: row.provider,
-    model: row.model,
-    apiKey: decrypt(row.api_key),
-    systemPrompt: row.system_prompt,
-    isActive: row.is_active,
-    autoReplyEnabled: row.auto_reply_enabled,
-    autoReplyMaxPerConversation: row.auto_reply_max_per_conversation,
-    aiTakeoverMinutes: row.ai_takeover_minutes ?? 5,
-    embeddingsApiKey,
-  }
-}
+ ): Promise<AiConfig | null> {
+   const { requireActive = true } = opts
+   const { data, error } = await db
+     .from('ai_configs')
+     .select(CONFIG_COLUMNS)
+     .eq('account_id', accountId)
+     .maybeSingle()
+ 
+   if (error) throw error
+   if (!data) return null
+ 
+   const row = data as AiConfigRow
+   // The Playground passes requireActive:false so an admin can test the
+   // agent before flipping the master switch on.
+   if (requireActive && !row.is_active) return null
+   // Defensive: the column is NOT NULL, but a partial write / manual DB
+   // edit could leave it empty. Treat a missing key as "not configured"
+   // rather than letting decrypt() throw on null.
+   if (!row.api_key) return null
+ 
+   // The embeddings key is optional and independent of the chat key —
+   // a corrupt/undecryptable one should downgrade to lexical KB, not
+   // take down draft/auto-reply, so decrypt failures are swallowed here.
+   let embeddingsApiKey: string | null = null
+   if (row.embeddings_api_key) {
+     try {
+       embeddingsApiKey = decrypt(row.embeddings_api_key)
+     } catch {
+       // Not silent — a rotated/mismatched ENCRYPTION_KEY here means
+       // semantic search quietly stops working, so leave a breadcrumb.
+       console.error(
+         `[ai config] embeddings key for account ${accountId} could not be decrypted — check ENCRYPTION_KEY; semantic search is disabled until it is re-entered.`,
+       )
+       embeddingsApiKey = null
+     }
+   }
+ 
+   return {
+     provider: row.provider,
+     model: row.model,
+     apiKey: decrypt(row.api_key),
+     systemPrompt: row.system_prompt,
+     isActive: row.is_active,
+     autoReplyEnabled: row.auto_reply_enabled,
+     autoReplyMaxPerConversation: row.auto_reply_max_per_conversation,
+     aiTakeoverMinutes: row.ai_takeover_minutes ?? 5,
+     aiReplyLimitResetMinutes: row.ai_reply_limit_reset_minutes ?? 240,
+     embeddingsApiKey,
+     coexistWithAutomations: row.coexist_with_automations ?? true,
+     triggerOnButtonReply: row.trigger_on_button_reply ?? true,
+     salesModeEnabled: row.sales_mode_enabled ?? false,
+     salesSystemPrompt: row.sales_system_prompt,
+     collectFields: Array.isArray(row.collect_fields) ? row.collect_fields : [],
+     autoCategorizeEnabled: row.auto_categorize_enabled ?? false,
+     categorizeAfterReplies: row.categorize_after_replies ?? 3,
+     interestedTagId: row.interested_tag_id,
+     notInterestedTagId: row.not_interested_tag_id,
+     interestedStatusId: row.interested_status_id,
+     notInterestedStatusId: row.not_interested_status_id,
+     paymentQrUrl: row.payment_qr_url,
+     paymentInstructions: row.payment_instructions,
+   }
+ }
 
 /**
  * Load + decrypt just the embeddings key, independent of `is_active`.

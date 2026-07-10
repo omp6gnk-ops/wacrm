@@ -97,8 +97,8 @@ interface MediaDraft {
 interface MessageComposerProps {
   conversationId: string;
   sessionExpired: boolean;
-  onSend: (text: string, replyToId?: string) => void;
-  onSendMedia: (payload: SendMediaPayload) => void;
+  onSend: (text: string, replyToId?: string) => Promise<void> | void;
+  onSendMedia: (payload: SendMediaPayload) => Promise<void> | void;
   onOpenTemplates: () => void;
   replyTo?: ReplyDraft | null;
   onClearReply?: () => void;
@@ -130,9 +130,9 @@ export function MessageComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const { accountId } = useAuth();
-  const [cannedReplies, setCannedReplies] = useState<{ id: string; shortcut: string; message_text: string; media_url?: string | null; media_type?: string | null }[]>([]);
+  const [cannedReplies, setCannedReplies] = useState<{ id: string; shortcut: string; message_text: string; media_url?: string | null; media_type?: string | null; position?: number; created_at?: string }[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [suggestions, setSuggestions] = useState<{ id: string; shortcut: string; message_text: string; media_url?: string | null; media_type?: string | null }[]>([]);
+  const [suggestions, setSuggestions] = useState<{ id: string; shortcut: string; message_text: string; media_url?: string | null; media_type?: string | null; position?: number; created_at?: string }[]>([]);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
 
   useEffect(() => {
@@ -141,12 +141,14 @@ export function MessageComposer({
       const supabase = createClient();
       const { data } = await supabase
         .from('canned_responses')
-        .select('id, shortcut, message_text, media_url, media_type')
+        .select('id, shortcut, message_text, media_url, media_type, position, created_at')
         .eq('account_id', accountId)
-        .order('shortcut');
+        .order('shortcut')
+        .order('position', { ascending: true })
+        .order('created_at', { ascending: true });
       setCannedReplies(data ?? []);
     };
-    loadCanned();
+    void loadCanned();
   }, [accountId]);
 
   // Media attachment state. `draft` holds an uploaded-but-not-yet-sent
@@ -230,7 +232,7 @@ export function MessageComposer({
     }
   }, [text, sending, sessionExpired, onSend, replyTo?.id]);
 
-  const applyCannedReply = useCallback((reply: { shortcut: string; message_text: string; media_url?: string | null; media_type?: string | null }) => {
+  const applyCannedReply = useCallback(async (reply: { shortcut: string; message_text: string; media_url?: string | null; media_type?: string | null }) => {
     if (!textareaRef.current) return;
     const el = textareaRef.current;
     const cursorPosition = el.selectionStart ?? text.length;
@@ -279,9 +281,18 @@ export function MessageComposer({
       }
     } else {
       // Send multiple messages in sequence immediately!
-      for (const item of matches) {
+      const sortedMatches = [...matches].sort((a, b) => {
+        const posA = a.position ?? 0;
+        const posB = b.position ?? 0;
+        if (posA !== posB) return posA - posB;
+        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return timeA - timeB;
+      });
+
+      for (const item of sortedMatches) {
         if (item.media_url && item.media_type) {
-          onSendMedia({
+          await onSendMedia({
             kind: item.media_type as any,
             mediaUrl: item.media_url,
             path: "",
@@ -289,8 +300,10 @@ export function MessageComposer({
             caption: item.message_text,
           });
         } else if (item.message_text.trim()) {
-          onSend(item.message_text.trim());
+          await onSend(item.message_text.trim());
         }
+        // Wait 500ms between messages to guarantee sequential delivery on WhatsApp
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
     }
   }, [text, adjustHeight, cannedReplies, onSend, onSendMedia]);

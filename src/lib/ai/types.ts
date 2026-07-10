@@ -13,6 +13,11 @@ export type AiProvider = 'openai' | 'anthropic'
  * `loadAiConfig` — `apiKey` is the plaintext BYO provider key
  * (stored AES-256-GCM-encrypted at rest).
  */
+export interface CollectField {
+  field: string // 'name' | 'email' | 'company' | 'custom:<uuid>'
+  required: boolean
+}
+
 export interface AiConfig {
   provider: AiProvider
   model: string
@@ -22,13 +27,33 @@ export interface AiConfig {
   autoReplyEnabled: boolean
   autoReplyMaxPerConversation: number
   /** How many minutes of agent inactivity before AI takes over an
-   *  assigned conversation. 0 = instant (AI always replies, even on
-   *  assigned chats where the agent hasn't messaged yet). */
+   *  assigned conversation. 0 = instant. */
   aiTakeoverMinutes: number
-  /** Optional OpenAI-compatible key for embeddings. When set, the
-   *  knowledge base is embedded and semantic retrieval turns on; when
-   *  null, retrieval falls back to lexical full-text search. */
+  /** How many minutes of inactivity before the per-conversation AI reply count resets. */
+  aiReplyLimitResetMinutes?: number
+  /** Optional OpenAI-compatible key for embeddings. */
   embeddingsApiKey: string | null
+  
+  // Trigger controls
+  coexistWithAutomations?: boolean
+  triggerOnButtonReply?: boolean
+
+  // Sales mode
+  salesModeEnabled?: boolean
+  salesSystemPrompt?: string | null
+  collectFields?: CollectField[]
+
+  // Auto-categorization
+  autoCategorizeEnabled?: boolean
+  categorizeAfterReplies?: number
+  interestedTagId?: string | null
+  notInterestedTagId?: string | null
+  interestedStatusId?: string | null
+  notInterestedStatusId?: string | null
+
+  // Payment/QR
+  paymentQrUrl?: string | null
+  paymentInstructions?: string | null
 }
 
 /** A single conversation turn in the shape both providers accept. */

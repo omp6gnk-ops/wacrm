@@ -38,7 +38,7 @@ interface ConversationListProps {
   showExpiredOnly?: boolean;
 }
 
-type InboxFilter = "all" | "unread" | "new_inbound" | "reply_to_agent";
+type InboxFilter = "all" | "unread" | "new_inbound" | "reply_to_agent" | "seen_unreplied";
 
 type AssignmentFilter = 'all_chats' | 'my_chats' | 'unassigned';
 
@@ -94,6 +94,17 @@ export function ConversationList({
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedStatusId, setSelectedStatusId] = useState<string | null>(null);
 
+  const [limit, setLimit] = useState(50);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  // Reset limit and hasMore when filters or resync token changes
+  useEffect(() => {
+    setLimit(50);
+    setHasMore(true);
+    setLoadingMore(false);
+  }, [showExpiredOnly, assignmentFilter, selectedAgentId, resyncToken]);
+
   // Keep the latest callback in a ref so the fetch effect below can
   // have a stable, empty-dep identity. Previously the fetch useCallback
   // depended on `onConversationsLoaded`, which depends on the parent's
@@ -131,17 +142,61 @@ export function ConversationList({
       query = query.eq('assigned_agent_id', selectedAgentId);
     }
 
+    if (search.trim()) {
+      const s = search.trim();
+      const { data: matchedContacts } = await supabase
+        .from("contacts")
+        .select("id")
+        .or(`name.ilike."%${s}%",phone.ilike."%${s}%"`);
+      const contactIds = (matchedContacts ?? []).map((c) => c.id);
+      if (contactIds.length > 0) {
+        query = query.or(`last_message_text.ilike."%${s}%",contact_id.in.(${contactIds.join(",")})`);
+      } else {
+        query = query.ilike("last_message_text", `%${s}%`);
+      }
+    }
+
     const { data, error } = await query
       .order("last_message_at", { ascending: false })
-      .limit(250);
+      .limit(limit);
 
     if (error) {
-      console.error("[conversation-list] fetch error:", error);
+      console.error("[conversation-list] fetch error details:", error.message, error.details, error.hint, error);
     } else {
-      loadCallbackRef.current?.(normalizeConversations(data ?? []));
+      const fetched = data ?? [];
+      loadCallbackRef.current?.(normalizeConversations(fetched));
+      setHasMore(fetched.length === limit);
     }
     setLoading(false);
-  }, [showExpiredOnly, assignmentFilter, currentUserId, selectedAgentId]);
+    setLoadingMore(false);
+  }, [showExpiredOnly, assignmentFilter, currentUserId, selectedAgentId, search, limit]);
+
+  const loadMore = useCallback(() => {
+    if (!hasMore || loading || loadingMore) return;
+    setLoadingMore(true);
+    setLimit((prev) => prev + 50);
+  }, [hasMore, loading, loadingMore]);
+
+  const observer = useRef<IntersectionObserver | null>(null);
+  const sentinelRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (observer.current) observer.current.disconnect();
+      if (loading || loadingMore) return;
+      observer.current = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting && hasMore) {
+          loadMore();
+        }
+      });
+      if (node) observer.current.observe(node);
+    },
+    [loading, loadingMore, hasMore, loadMore]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (observer.current) observer.current.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -227,6 +282,14 @@ export function ConversationList({
       result = result.filter((c) => c.unread_count > 0 && !c.has_agent_replied);
     } else if (filter === "reply_to_agent") {
       result = result.filter((c) => c.unread_count > 0 && c.has_agent_replied);
+    } else if (filter === "seen_unreplied") {
+      result = result.filter(
+        (c) =>
+          c.unread_count === 0 &&
+          c.last_customer_message_at &&
+          c.last_message_at &&
+          c.last_customer_message_at === c.last_message_at
+      );
     }
 
     if (selectedStatusId !== null) {
@@ -295,6 +358,7 @@ export function ConversationList({
     { label: "Unread (All)", value: "unread" },
     { label: "New Inbound (First Msg)", value: "new_inbound" },
     { label: "Reply to Agent (Returning)", value: "reply_to_agent" },
+    { label: "Seen & Unanswered", value: "seen_unreplied" },
   ], []);
 
   const activeFilter = filterOptions.find((o) => o.value === filter);
@@ -579,6 +643,16 @@ export function ConversationList({
                 customStatuses={customStatuses}
               />
             ))}
+            {/* Infinite scroll sentinel */}
+            {hasMore && (
+              <div
+                ref={sentinelRef}
+                className="h-12 flex items-center justify-center text-xs text-muted-foreground border-t border-border/5 py-4"
+              >
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent mr-2" />
+                Loading more chats...
+              </div>
+            )}
           </div>
         )}
       </ScrollArea>

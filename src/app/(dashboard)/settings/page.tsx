@@ -19,6 +19,7 @@ import { WalletPanel } from '@/components/settings/wallet-panel';
 import { CannedPanel } from '@/components/settings/canned-panel';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import { IntegrationsPanel } from '@/components/settings/integrations-panel';
+import { AiSalesConfig } from '@/components/settings/ai-sales-config';
 import {
   resolveSection,
   SECTION_META,
@@ -79,6 +80,7 @@ export default function SettingsPage() {
     canned: <CannedPanel />,
     api: <ApiKeysSettings />,
     integrations: <IntegrationsPanel />,
+    'ai-agent': <AiSalesConfig />,
   };
 
   return (

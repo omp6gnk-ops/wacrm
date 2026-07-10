@@ -25,6 +25,7 @@ interface MessageBubbleProps {
   reactions?: MessageReaction[];
   currentUserId?: string;
   onToggleReaction?: (emoji: string) => void;
+  onRetry?: () => void;
 }
 
 function StatusIcon({ status, isAgent = false }: { status: Message["status"]; isAgent?: boolean }) {
@@ -248,6 +249,7 @@ export function MessageBubble({
   reactions,
   currentUserId,
   onToggleReaction,
+  onRetry,
 }: MessageBubbleProps) {
   const isAgent = message.sender_type === "agent" || message.sender_type === "bot";
   const time = format(new Date(message.created_at), "HH:mm");
@@ -295,7 +297,20 @@ export function MessageBubble({
           >
             {time}
           </span>
-          {isAgent && <StatusIcon status={message.status} isAgent={true} />}
+          {isAgent && (
+            <div className="flex items-center gap-1">
+              <StatusIcon status={message.status} isAgent={true} />
+              {message.status === "failed" && onRetry && (
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  className="text-[10px] font-medium text-white/90 hover:text-white underline cursor-pointer"
+                >
+                  Retry
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
       {reactions && reactions.length > 0 && onToggleReaction && (

@@ -53,22 +53,31 @@ export async function dispatchInboundToAiReply(
     const config = await loadAiConfig(db, accountId)
     if (!config || !config.autoReplyEnabled) return
 
-    // Deterministic, user-configured responders win over the LLM — the
-    // caller already excludes messages a Flow consumed. Message-level
-    // automations (`new_message_received` / `keyword_match`) are
-    // dispatched independently for this same inbound and may send their
-    // own reply, so if the account has any active one we stand down to
-    // avoid double-texting the customer. (Relationship triggers like
-    // `first_inbound_message` don't count — they're not per-message
-    // auto-responders.)
-    const { data: autoResponders } = await db
-      .from('automations')
-      .select('id')
-      .eq('account_id', accountId)
-      .eq('is_active', true)
-      .in('trigger_type', ['new_message_received', 'keyword_match'])
+    // Trigger on button reply gate
+    // If the latest message was an interactive button reply, but triggerOnButtonReply is disabled, stand down
+    const { data: latestMsg } = await db
+      .from('messages')
+      .select('content_type')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: false })
       .limit(1)
-    if (autoResponders && autoResponders.length > 0) return
+      .maybeSingle()
+    if (latestMsg?.content_type === 'interactive' && !config.triggerOnButtonReply) {
+      return
+    }
+
+    // Deterministic, user-configured responders win over the LLM.
+    // If coexistWithAutomations is false, check for active auto-responders.
+    if (!config.coexistWithAutomations) {
+      const { data: autoResponders } = await db
+        .from('automations')
+        .select('id')
+        .eq('account_id', accountId)
+        .eq('is_active', true)
+        .in('trigger_type', ['new_message_received', 'keyword_match'])
+        .limit(1)
+      if (autoResponders && autoResponders.length > 0) return
+    }
 
     const { data: conv, error: convErr } = await db
       .from('conversations')
@@ -78,59 +87,56 @@ export async function dispatchInboundToAiReply(
     if (convErr || !conv) return
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
 
-    // Smart agent-activity gate: instead of blocking AI entirely when a
-    // chat is assigned, we use a two-tier approach:
-    //
-    // Tier 1 — Agent NEVER replied (first customer contact / broadcast
-    //   reply): AI responds INSTANTLY. The customer shouldn't wait.
-    //
-    // Tier 2 — Agent HAS replied before but is now inactive: AI waits
-    //   for `aiTakeoverMinutes` (admin-configured, default 5) before
-    //   stepping in. This prevents double-texting when an agent just
-    //   sent a message, but hands the chat to AI when agents are
-    //   offline (nights, holidays, breaks).
-    if (conv.assigned_agent_id) {
-      const agentHasReplied = conv.has_agent_replied === true
+    // Smart agent-activity gate:
+    // If agent NEVER replied -> AI responds INSTANTLY.
+    // If agent HAS replied before -> AI checks if human agent sent any message within
+    // the takeoverMinutes window. If yes, AI stands down.
+    const agentHasReplied = conv.has_agent_replied === true
 
-      if (agentHasReplied) {
-        // Tier 2: agent replied before — check recency window.
-        const takeoverMinutes = config.aiTakeoverMinutes ?? 5
-        if (takeoverMinutes > 0) {
-          const cutoff = new Date(
-            Date.now() - takeoverMinutes * 60 * 1000,
-          ).toISOString()
+    if (agentHasReplied) {
+      const takeoverMinutes = config.aiTakeoverMinutes ?? 5
+      if (takeoverMinutes > 0) {
+        const cutoff = new Date(
+          Date.now() - takeoverMinutes * 60 * 1000,
+        ).toISOString()
 
-          const { data: recentAgentMsgs } = await db
-            .from('messages')
-            .select('id')
-            .eq('conversation_id', conversationId)
-            .eq('sender_type', 'agent')
-            .gte('created_at', cutoff)
-            .limit(1)
+        const { data: recentAgentMsgs } = await db
+          .from('messages')
+          .select('id')
+          .eq('conversation_id', conversationId)
+          .eq('sender_type', 'agent')
+          .gte('created_at', cutoff)
+          .limit(1)
 
-          if (recentAgentMsgs && recentAgentMsgs.length > 0) {
-            // Agent is actively chatting — stand down.
-            return
-          }
-        }
-        // Agent replied before but is now inactive — AI takes over.
-        // Reset the AI reply count so the bot gets a fresh quota for
-        // this new "session" (avoids the cap being exhausted from a
-        // much earlier AI interaction).
-        if (conv.ai_reply_count > 0) {
-          await db
-            .from('conversations')
-            .update({ ai_reply_count: 0 })
-            .eq('id', conversationId)
-          conv.ai_reply_count = 0
+        if (recentAgentMsgs && recentAgentMsgs.length > 0) {
+          // Human agent is actively chatting - stand down.
+          return
         }
       }
-      // Tier 1 (agentHasReplied === false): fall through — AI replies
-      // instantly, no waiting.
     }
 
-    // Cheap early-out; the authoritative cap check is the atomic claim
-    // below (this read can race a concurrent inbound).
+    // Check if the reply count should be reset due to inactivity
+    const resetMinutes = config.aiReplyLimitResetMinutes ?? 240
+    const { data: lastMsg } = await db
+      .from('messages')
+      .select('created_at')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (lastMsg) {
+      const minutesSinceLastActive = (Date.now() - new Date(lastMsg.created_at).getTime()) / (1000 * 60)
+      if (minutesSinceLastActive >= resetMinutes) {
+        await db
+          .from('conversations')
+          .update({ ai_reply_count: 0 })
+          .eq('id', conversationId)
+        conv.ai_reply_count = 0
+      }
+    }
+
+    // Cheap early-out; the authoritative cap check is the atomic claim below
     if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return
 
     const messages = await buildConversationContext(db, conversationId)
@@ -148,6 +154,9 @@ export async function dispatchInboundToAiReply(
       userPrompt: config.systemPrompt,
       mode: 'auto_reply',
       knowledge,
+      salesModeEnabled: config.salesModeEnabled,
+      salesSystemPrompt: config.salesSystemPrompt,
+      collectFields: config.collectFields,
     })
 
     const { text, handoff } = await generateReply({
@@ -196,6 +205,19 @@ export async function dispatchInboundToAiReply(
       contactId,
       text,
     })
+
+    // Invoke sales intelligence engine if enabled
+    if (config.salesModeEnabled) {
+      const { runSalesAssessment } = await import('./sales-engine')
+      await runSalesAssessment({
+        accountId,
+        conversationId,
+        contactId,
+        config,
+        messages,
+        aiReply: text,
+      }).catch((err) => console.error('[ai auto-reply] Sales assessment failed:', err))
+    }
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err)
   }
