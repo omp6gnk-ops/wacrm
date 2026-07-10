@@ -131,7 +131,7 @@ export function ConversationList({
     if (showExpiredOnly) {
       query = query.lte("last_customer_message_at", twentyFourHoursAgo);
     } else {
-      query = query.or(`last_customer_message_at.gt.${twentyFourHoursAgo},last_customer_message_at.is.null`);
+      query = query.or(`last_customer_message_at.gt."${twentyFourHoursAgo}",last_customer_message_at.is.null`);
     }
 
     if (assignmentFilter === 'my_chats' && currentUserId) {
