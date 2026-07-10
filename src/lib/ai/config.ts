@@ -26,10 +26,15 @@ interface AiConfigRow {
   payment_qr_url: string | null
   payment_instructions: string | null
   ai_reply_limit_reset_minutes: number
+  restrict_to_agent_ids: any
+  razorpay_enabled: boolean
+  razorpay_key_id: string | null
+  razorpay_key_secret: string | null
+  razorpay_webhook_secret: string | null
 }
 
 const CONFIG_COLUMNS =
-  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, ai_takeover_minutes, ai_reply_limit_reset_minutes, embeddings_api_key, coexist_with_automations, trigger_on_button_reply, sales_mode_enabled, sales_system_prompt, collect_fields, auto_categorize_enabled, categorize_after_replies, interested_tag_id, not_interested_tag_id, interested_status_id, not_interested_status_id, payment_qr_url, payment_instructions'
+  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, ai_takeover_minutes, ai_reply_limit_reset_minutes, embeddings_api_key, coexist_with_automations, trigger_on_button_reply, sales_mode_enabled, sales_system_prompt, collect_fields, auto_categorize_enabled, categorize_after_replies, interested_tag_id, not_interested_tag_id, interested_status_id, not_interested_status_id, payment_qr_url, payment_instructions, restrict_to_agent_ids, razorpay_enabled, razorpay_key_id, razorpay_key_secret, razorpay_webhook_secret'
 
 /**
  * Load and decrypt the account's AI config for *use* (draft or
@@ -82,6 +87,15 @@ export async function loadAiConfig(
        embeddingsApiKey = null
      }
    }
+
+   let razorpayKeySecret: string | null = null
+   if (row.razorpay_key_secret) {
+     try {
+       razorpayKeySecret = decrypt(row.razorpay_key_secret)
+     } catch {
+       console.error(`[ai config] Razorpay key secret for account ${accountId} could not be decrypted.`)
+     }
+   }
  
    return {
      provider: row.provider,
@@ -107,6 +121,11 @@ export async function loadAiConfig(
      notInterestedStatusId: row.not_interested_status_id,
      paymentQrUrl: row.payment_qr_url,
      paymentInstructions: row.payment_instructions,
+     restrictToAgentIds: Array.isArray(row.restrict_to_agent_ids) ? row.restrict_to_agent_ids : [],
+     razorpayEnabled: row.razorpay_enabled ?? false,
+     razorpayKeyId: row.razorpay_key_id,
+     razorpayKeySecret,
+     razorpayWebhookSecret: row.razorpay_webhook_secret,
    }
  }
 

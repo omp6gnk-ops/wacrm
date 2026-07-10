@@ -9,6 +9,8 @@ export interface GenerateArgs {
   systemPrompt: string
   /** Recent conversation turns, oldest first. */
   messages: ChatMessage[]
+  conversationId?: string
+  accountId?: string
 }
 
 /**
@@ -17,7 +19,7 @@ export interface GenerateArgs {
  * of the raw text. Throws `AiError` on any provider/network failure.
  */
 export async function generateReply(args: GenerateArgs): Promise<GenerateResult> {
-  const { config, systemPrompt, messages } = args
+  const { config, systemPrompt, messages, conversationId, accountId } = args
   const timeoutMs = aiRequestTimeoutMs()
   const providerArgs = {
     apiKey: config.apiKey,
@@ -25,6 +27,9 @@ export async function generateReply(args: GenerateArgs): Promise<GenerateResult>
     systemPrompt,
     messages,
     timeoutMs,
+    conversationId,
+    accountId,
+    razorpayEnabled: config.razorpayEnabled,
   }
 
   let raw: string

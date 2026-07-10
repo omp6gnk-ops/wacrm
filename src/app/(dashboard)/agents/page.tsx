@@ -1,13 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Bot, Sparkles, Settings2, TrendingUp } from 'lucide-react';
+import { Bot, Sparkles, Settings2, TrendingUp, Users } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { AiPlayground } from '@/components/agents/ai-playground';
 import { AiSalesConfig } from '@/components/settings/ai-sales-config';
 import { AiAssessments } from '@/components/agents/ai-assessments';
+import { AiAgentAssistants } from '@/components/settings/ai-agent-assistants';
 
-type Tab = 'playground' | 'setup' | 'assessments';
+type Tab = 'playground' | 'setup' | 'assessments' | 'assistants';
 
 export default function AgentsPage() {
   const [tab, setTab] = useState<Tab>('playground');
@@ -61,6 +62,9 @@ export default function AgentsPage() {
             <TabsTrigger value="assessments">
               <TrendingUp className="mr-1.5 h-4 w-4" /> Sales Dashboard
             </TabsTrigger>
+            <TabsTrigger value="assistants">
+              <Users className="mr-1.5 h-4 w-4" /> Agent Assistants
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="playground" className="mt-4">
@@ -73,6 +77,10 @@ export default function AgentsPage() {
 
           <TabsContent value="assessments" className="mt-4">
             <AiAssessments />
+          </TabsContent>
+
+          <TabsContent value="assistants" className="mt-4">
+            <AiAgentAssistants />
           </TabsContent>
         </Tabs>
       )}

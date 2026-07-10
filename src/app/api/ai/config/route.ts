@@ -33,7 +33,7 @@ export async function GET() {
         'provider, model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, ai_takeover_minutes, ai_reply_limit_reset_minutes, api_key, embeddings_api_key, ' +
         'coexist_with_automations, trigger_on_button_reply, sales_mode_enabled, sales_system_prompt, collect_fields, ' +
         'auto_categorize_enabled, categorize_after_replies, interested_tag_id, not_interested_tag_id, interested_status_id, not_interested_status_id, ' +
-        'payment_qr_url, payment_instructions',
+        'payment_qr_url, payment_instructions, restrict_to_agent_ids, razorpay_enabled, razorpay_key_id, razorpay_key_secret, razorpay_webhook_secret',
       )
       .eq('account_id', accountId)
       .maybeSingle()
@@ -49,11 +49,12 @@ export async function GET() {
     if (!data) return NextResponse.json({ configured: false })
     // The keys are selected only to derive the has_* flags; neither is
     // returned to the client.
-    const { api_key, embeddings_api_key, ...safe } = data as any
+    const { api_key, embeddings_api_key, razorpay_key_secret, ...safe } = data as any
     return NextResponse.json({
       configured: true,
       has_key: !!api_key,
       has_embeddings_key: !!embeddings_api_key,
+      has_razorpay_key_secret: !!razorpay_key_secret,
       ...safe,
     })
   } catch (err) {
@@ -227,6 +228,13 @@ export async function POST(request: Request) {
     const paymentQrUrl = typeof body.payment_qr_url === 'string' && body.payment_qr_url.trim() ? body.payment_qr_url.trim() : null
     const paymentInstructions = typeof body.payment_instructions === 'string' && body.payment_instructions.trim() ? body.payment_instructions.trim() : null
 
+    const restrictToAgentIds = Array.isArray(body.restrict_to_agent_ids) ? body.restrict_to_agent_ids : []
+    const razorpayEnabled = body.razorpay_enabled === true
+    const razorpayKeyId = typeof body.razorpay_key_id === 'string' && body.razorpay_key_id.trim() ? body.razorpay_key_id.trim() : null
+    const rawRazorpayKeySecret = typeof body.razorpay_key_secret === 'string' ? body.razorpay_key_secret.trim() : ''
+    const clearRazorpayKeySecret = body.razorpay_key_secret === null
+    const razorpayWebhookSecret = typeof body.razorpay_webhook_secret === 'string' && body.razorpay_webhook_secret.trim() ? body.razorpay_webhook_secret.trim() : null
+
     const shared: Record<string, unknown> = {
       provider,
       model,
@@ -249,7 +257,17 @@ export async function POST(request: Request) {
       not_interested_status_id: notInterestedStatusId,
       payment_qr_url: paymentQrUrl,
       payment_instructions: paymentInstructions,
+      restrict_to_agent_ids: restrictToAgentIds,
+      razorpay_enabled: razorpayEnabled,
+      razorpay_key_id: razorpayKeyId,
+      razorpay_webhook_secret: razorpayWebhookSecret,
     }
+    if (rawRazorpayKeySecret) {
+      shared.razorpay_key_secret = encrypt(rawRazorpayKeySecret)
+    } else if (clearRazorpayKeySecret) {
+      shared.razorpay_key_secret = null
+    }
+
     if (rawEmbeddingsKey) {
       shared.embeddings_api_key = encrypt(rawEmbeddingsKey)
     } else if (clearEmbeddingsKey) {

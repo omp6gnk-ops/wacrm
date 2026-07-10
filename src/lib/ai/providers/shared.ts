@@ -10,6 +10,9 @@ export interface ProviderArgs {
   systemPrompt: string
   messages: ChatMessage[]
   timeoutMs: number
+  conversationId?: string
+  accountId?: string
+  razorpayEnabled?: boolean
 }
 
 /** Map a fetch rejection (timeout / DNS / offline) to a typed AiError. */

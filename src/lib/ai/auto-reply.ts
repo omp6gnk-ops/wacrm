@@ -87,6 +87,41 @@ export async function dispatchInboundToAiReply(
     if (convErr || !conv) return
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
 
+    // Check for Agent-Specific Assistant AI config
+    let isAssistantMode = false
+    let assistantPrompt = ''
+    let assistantMaxReplies = 3
+
+    if (conv.assigned_agent_id) {
+      const { data: agentConfig } = await db
+        .from('ai_agent_configs')
+        .select('system_prompt, max_replies, is_active')
+        .eq('account_id', accountId)
+        .eq('agent_id', conv.assigned_agent_id)
+        .eq('is_active', true)
+        .maybeSingle()
+
+      if (agentConfig) {
+        isAssistantMode = true
+        assistantPrompt = agentConfig.system_prompt
+        assistantMaxReplies = agentConfig.max_replies
+      }
+    }
+
+    // Apply Agent Scope Restrictions if not in assistant mode
+    if (!isAssistantMode && config.restrictToAgentIds && config.restrictToAgentIds.length > 0) {
+      const assignedAgentId = conv.assigned_agent_id
+      if (assignedAgentId) {
+        if (!config.restrictToAgentIds.includes(assignedAgentId)) {
+          return // stand down: chat is assigned to an agent who is not selected
+        }
+      } else {
+        if (!config.restrictToAgentIds.includes('unassigned')) {
+          return // stand down: chat is unassigned and unassigned is not selected
+        }
+      }
+    }
+
     // Smart agent-activity gate:
     // If agent NEVER replied -> AI responds INSTANTLY.
     // If agent HAS replied before -> AI checks if human agent sent any message within
@@ -136,33 +171,41 @@ export async function dispatchInboundToAiReply(
       }
     }
 
-    // Cheap early-out; the authoritative cap check is the atomic claim below
-    if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return
+    // Cheap early-out check against correct cap
+    const activeMaxReplies = isAssistantMode ? assistantMaxReplies : config.autoReplyMaxPerConversation
+    if (conv.ai_reply_count >= activeMaxReplies) return
 
     const messages = await buildConversationContext(db, conversationId)
     if (messages.length === 0) return
 
-    // Ground the reply in the account's knowledge base (best-effort).
-    const knowledge = await retrieveKnowledge(
-      db,
-      accountId,
-      config,
-      latestUserMessage(messages),
-    )
+    let systemPrompt = ''
+    if (isAssistantMode) {
+      systemPrompt = assistantPrompt
+    } else {
+      // Ground the reply in the account's knowledge base (best-effort).
+      const knowledge = await retrieveKnowledge(
+        db,
+        accountId,
+        config,
+        latestUserMessage(messages),
+      )
 
-    const systemPrompt = buildSystemPrompt({
-      userPrompt: config.systemPrompt,
-      mode: 'auto_reply',
-      knowledge,
-      salesModeEnabled: config.salesModeEnabled,
-      salesSystemPrompt: config.salesSystemPrompt,
-      collectFields: config.collectFields,
-    })
+      systemPrompt = buildSystemPrompt({
+        userPrompt: config.systemPrompt,
+        mode: 'auto_reply',
+        knowledge,
+        salesModeEnabled: config.salesModeEnabled,
+        salesSystemPrompt: config.salesSystemPrompt,
+        collectFields: config.collectFields,
+      })
+    }
 
     const { text, handoff } = await generateReply({
       config,
       systemPrompt,
       messages,
+      conversationId,
+      accountId,
     })
 
     if (handoff || !text) {
@@ -176,23 +219,15 @@ export async function dispatchInboundToAiReply(
       return
     }
 
-    // Atomically claim a reply slot: the cap check + increment happen in
-    // one UPDATE, so concurrent inbounds can never overshoot the cap. If
-    // another inbound just took the last slot, `claimed` is false and we
-    // skip the send. (We consume a slot slightly before the send lands —
-    // fail-safe: under-reply rather than over-reply.)
+    // Atomically claim a reply slot using the active max replies parameter
     const { data: claimed, error: claimErr } = await db.rpc(
       'claim_ai_reply_slot',
       {
         conversation_id: conversationId,
-        max_replies: config.autoReplyMaxPerConversation,
+        max_replies: activeMaxReplies,
       },
     )
     if (claimErr) {
-      // A real error here (vs. losing the cap race) is almost always a
-      // deploy issue — e.g. `claim_ai_reply_slot` not EXECUTE-able by the
-      // service role, or the migration not applied. Log it loudly: a
-      // silent return makes "auto-reply never fires" undiagnosable.
       console.error('[ai auto-reply] claim_ai_reply_slot failed:', claimErr)
       return
     }
@@ -206,8 +241,8 @@ export async function dispatchInboundToAiReply(
       text,
     })
 
-    // Invoke sales intelligence engine if enabled
-    if (config.salesModeEnabled) {
+    // Invoke sales intelligence engine if enabled and not in assistant mode
+    if (!isAssistantMode && config.salesModeEnabled) {
       const { runSalesAssessment } = await import('./sales-engine')
       await runSalesAssessment({
         accountId,

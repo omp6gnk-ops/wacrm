@@ -54,6 +54,24 @@ export interface AiConfig {
   // Payment/QR
   paymentQrUrl?: string | null
   paymentInstructions?: string | null
+
+  // Razorpay Dynamic Link Payment Settings
+  restrictToAgentIds?: string[]
+  razorpayEnabled?: boolean
+  razorpayKeyId?: string | null
+  razorpayKeySecret?: string | null
+  razorpayWebhookSecret?: string | null
+}
+
+export interface AiAgentConfig {
+  id: string
+  accountId: string
+  agentId: string
+  systemPrompt: string
+  maxReplies: number
+  isActive: boolean
+  createdAt?: string
+  updatedAt?: string
 }
 
 /** A single conversation turn in the shape both providers accept. */

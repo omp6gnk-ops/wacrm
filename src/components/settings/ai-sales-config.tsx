@@ -79,6 +79,18 @@ export function AiSalesConfig() {
   const [paymentQrUrl, setPaymentQrUrl] = useState('');
   const [paymentInstructions, setPaymentInstructions] = useState('');
 
+  // Razorpay
+  const [razorpayEnabled, setRazorpayEnabled] = useState(false);
+  const [razorpayKeyId, setRazorpayKeyId] = useState('');
+  const [razorpayKeySecret, setRazorpayKeySecret] = useState('');
+  const [razorpayKeySecretEdited, setRazorpayKeySecretEdited] = useState(false);
+  const [hasStoredRazorpayKeySecret, setHasStoredRazorpayKeySecret] = useState(false);
+  const [razorpayWebhookSecret, setRazorpayWebhookSecret] = useState('');
+
+  // Agent Scope Restrictions
+  const [restrictToAgentIds, setRestrictToAgentIds] = useState<string[]>([]);
+  const [teamMembers, setTeamMembers] = useState<{user_id: string; full_name: string; account_role: string}[]>([]);
+
   // Auto-Categorization
   const [autoCategorizeEnabled, setAutoCategorizeEnabled] = useState(false);
   const [categorizeAfterReplies, setCategorizeAfterReplies] = useState(3);
@@ -93,6 +105,19 @@ export function AiSalesConfig() {
   const [accountStatuses, setAccountStatuses] = useState<any[]>([]);
 
   const loadedAccountIdRef = useRef<string | null>(null);
+
+  // Fetch team members for agent restriction checkboxes
+  const fetchTeamMembers = useCallback(async () => {
+    try {
+      const res = await fetch('/api/account/members');
+      if (res.ok) {
+        const data = await res.json();
+        setTeamMembers((data.members ?? []).filter((m: any) => m.account_role !== 'viewer'));
+      }
+    } catch (err) {
+      console.error('Failed to load team members:', err);
+    }
+  }, []);
 
   // Fetch account reference tables (tags, custom fields, lead statuses)
   const fetchReferenceData = useCallback(async () => {
@@ -165,6 +190,17 @@ export function AiSalesConfig() {
         setInterestedStatusId(data.interested_status_id || null);
         setNotInterestedStatusId(data.not_interested_status_id || null);
 
+        // Razorpay
+        setRazorpayEnabled(data.razorpay_enabled === true);
+        setRazorpayKeyId(data.razorpay_key_id ?? '');
+        setHasStoredRazorpayKeySecret(Boolean(data.has_razorpay_key_secret));
+        setRazorpayKeySecret(data.has_razorpay_key_secret ? MASKED_KEY : '');
+        setRazorpayKeySecretEdited(false);
+        setRazorpayWebhookSecret(data.razorpay_webhook_secret ?? '');
+
+        // Agent restriction
+        setRestrictToAgentIds(Array.isArray(data.restrict_to_agent_ids) ? data.restrict_to_agent_ids : []);
+
         setHasStoredKey(Boolean(data.has_key));
         setApiKey(data.has_key ? MASKED_KEY : '');
         setKeyEdited(false);
@@ -178,6 +214,11 @@ export function AiSalesConfig() {
       setLoading(false);
     }
   }, []);
+
+  // Load team members on mount
+  useEffect(() => {
+    fetchTeamMembers();
+  }, [fetchTeamMembers]);
 
   useEffect(() => {
     if (!accountId || loadedAccountIdRef.current === accountId) return;
@@ -254,6 +295,11 @@ export function AiSalesConfig() {
           not_interested_status_id: notInterestedStatusId,
           payment_qr_url: paymentQrUrl.trim() || null,
           payment_instructions: paymentInstructions.trim() || null,
+          restrict_to_agent_ids: restrictToAgentIds,
+          razorpay_enabled: razorpayEnabled,
+          razorpay_key_id: razorpayKeyId.trim() || null,
+          razorpay_key_secret: razorpayKeySecretEdited ? (razorpayKeySecret.trim() || null) : undefined,
+          razorpay_webhook_secret: razorpayWebhookSecret.trim() || null,
         }),
       });
       const data = await res.json();
@@ -292,6 +338,11 @@ export function AiSalesConfig() {
         setCollectFields([]);
         setPaymentQrUrl('');
         setPaymentInstructions('');
+        setRazorpayEnabled(false);
+        setRazorpayKeyId('');
+        setRazorpayKeySecret('');
+        setRazorpayWebhookSecret('');
+        setRestrictToAgentIds([]);
         setHasStoredKey(false);
         setHasStoredEmbeddingsKey(false);
       } else {
@@ -592,6 +643,60 @@ export function AiSalesConfig() {
                   If the conversation is inactive for this long, the reply limit counter resets back to 0. (Set to 240m for 4 hours, or 1440m for 24 hours).
                 </p>
               </div>
+
+              {/* AGENT SCOPE RESTRICTION */}
+              <div className="grid gap-2 pt-4 border-t border-border/40 mt-4">
+                <Label className="font-semibold text-base">Restrict AI to Specific Assigned Agents</Label>
+                <p className="text-[12px] text-muted-foreground pb-2">
+                  Select which agents' chats the main AI should respond to. If none are selected, AI responds to all eligible chats.
+                </p>
+                <div className="grid grid-cols-2 gap-2 border border-border/60 rounded-xl p-3 bg-muted/20 max-h-[200px] overflow-y-auto">
+                  {/* Unassigned chats option */}
+                  <div className="flex items-center gap-2 p-1.5">
+                    <Checkbox
+                      id="restrict-unassigned"
+                      disabled={disabled}
+                      checked={restrictToAgentIds.includes('unassigned')}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          setRestrictToAgentIds([...restrictToAgentIds, 'unassigned']);
+                        } else {
+                          setRestrictToAgentIds(restrictToAgentIds.filter(id => id !== 'unassigned'));
+                        }
+                      }}
+                    />
+                    <Label htmlFor="restrict-unassigned" className="text-sm font-medium cursor-pointer">Unassigned Chats</Label>
+                  </div>
+                  {teamMembers.map((member) => (
+                    <div key={member.user_id} className="flex items-center gap-2 p-1.5">
+                      <Checkbox
+                        id={`restrict-${member.user_id}`}
+                        disabled={disabled}
+                        checked={restrictToAgentIds.includes(member.user_id)}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setRestrictToAgentIds([...restrictToAgentIds, member.user_id]);
+                          } else {
+                            setRestrictToAgentIds(restrictToAgentIds.filter(id => id !== member.user_id));
+                          }
+                        }}
+                      />
+                      <Label htmlFor={`restrict-${member.user_id}`} className="text-sm font-medium cursor-pointer">
+                        {member.full_name}
+                        <span className="text-[10px] text-muted-foreground ml-1 capitalize">({member.account_role})</span>
+                      </Label>
+                    </div>
+                  ))}
+                  {teamMembers.length === 0 && (
+                    <p className="text-xs text-muted-foreground col-span-2">Loading team members...</p>
+                  )}
+                </div>
+                {restrictToAgentIds.length > 0 && (
+                  <p className="text-[11px] text-primary font-medium">
+                    ✓ AI will only reply to chats assigned to {restrictToAgentIds.length} selected option(s).
+                  </p>
+                )}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -721,42 +826,99 @@ export function AiSalesConfig() {
                 </div>
               </div>
 
-              {/* PAYMENT & QR SECTION */}
+              {/* PAYMENT SECTION */}
               <div className="grid gap-4 border-t border-border/40 pt-4">
-                <Label className="font-semibold flex items-center gap-1.5">
+                <Label className="font-semibold text-base flex items-center gap-1.5">
                   <Info className="h-4 w-4 text-muted-foreground" />
-                  QR Payment Configuration
+                  Payment Collection
                 </Label>
-                <div className="grid gap-2">
-                  <Label htmlFor="paymentQrUrl">UPI / Payment QR Image Link</Label>
-                  <Input
-                    id="paymentQrUrl"
+
+                {/* RAZORPAY TOGGLE */}
+                <div className="flex items-center justify-between border border-border/40 rounded-xl p-3 bg-muted/10">
+                  <div className="space-y-0.5 pr-4">
+                    <Label className="font-semibold">Enable Razorpay Dynamic Payment Links</Label>
+                    <p className="text-[11px] text-muted-foreground">
+                      AI will generate unique Razorpay checkout links and deliver digital files automatically after payment.
+                    </p>
+                  </div>
+                  <Switch
                     disabled={disabled || !salesModeEnabled}
-                    value={paymentQrUrl}
-                    onChange={(e) => setPaymentQrUrl(e.target.value)}
-                    placeholder="https://yourdomain.com/static/upi_qr.png"
+                    checked={razorpayEnabled}
+                    onCheckedChange={setRazorpayEnabled}
                   />
-                  <p className="text-[11px] text-muted-foreground">
-                    Public link to your payment QR code. When the AI determines the customer is ready to buy, it will send this image.
-                  </p>
-                  {paymentQrUrl && (
-                    <div className="mt-2 border border-border/80 rounded-xl p-2 max-w-[120px] bg-muted/40">
-                      <img src={paymentQrUrl} alt="QR Code Preview" className="h-24 w-24 object-contain mx-auto" onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }} />
-                    </div>
-                  )}
                 </div>
 
-                <div className="grid gap-2">
-                  <Label htmlFor="paymentInstructions">Payment Instructions Text</Label>
-                  <Textarea
-                    id="paymentInstructions"
-                    disabled={disabled || !salesModeEnabled}
-                    value={paymentInstructions}
-                    onChange={(e) => setPaymentInstructions(e.target.value)}
-                    placeholder="e.g. Please transfer ₹999 to UPI ID: store@upi and reply with a screenshot."
-                    className="min-h-[70px]"
-                  />
-                </div>
+                {razorpayEnabled && (
+                  <div className="grid gap-3 border border-primary/20 rounded-xl p-4 bg-primary/5 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="razorpayKeyId">Razorpay Key ID</Label>
+                      <Input
+                        id="razorpayKeyId"
+                        disabled={disabled}
+                        value={razorpayKeyId}
+                        onChange={(e) => setRazorpayKeyId(e.target.value)}
+                        placeholder="rzp_live_..."
+                      />
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="razorpayKeySecret">Razorpay Key Secret</Label>
+                      <Input
+                        id="razorpayKeySecret"
+                        type="password"
+                        disabled={disabled}
+                        value={razorpayKeySecret}
+                        onChange={(e) => { setRazorpayKeySecret(e.target.value); setRazorpayKeySecretEdited(true); }}
+                        onFocus={() => { if (!razorpayKeySecretEdited && hasStoredRazorpayKeySecret) { setRazorpayKeySecret(''); setRazorpayKeySecretEdited(true); } }}
+                        placeholder={hasStoredRazorpayKeySecret ? MASKED_KEY : 'Enter your Razorpay Key Secret'}
+                      />
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="razorpayWebhookSecret">Webhook Secret</Label>
+                      <Input
+                        id="razorpayWebhookSecret"
+                        disabled={disabled}
+                        value={razorpayWebhookSecret}
+                        onChange={(e) => setRazorpayWebhookSecret(e.target.value)}
+                        placeholder="whsec_..."
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        Set this in your Razorpay Dashboard → Webhooks → Add Webhook. URL: <code className="text-[10px] bg-muted px-1 py-0.5 rounded">{typeof window !== 'undefined' ? window.location.origin : ''}/api/webhooks/razorpay</code>
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* STATIC QR FALLBACK (shown when Razorpay is OFF) */}
+                {!razorpayEnabled && (
+                  <div className="grid gap-3 animate-in fade-in duration-200">
+                    <div className="grid gap-2">
+                      <Label htmlFor="paymentQrUrl">UPI / Payment QR Image Link</Label>
+                      <Input
+                        id="paymentQrUrl"
+                        disabled={disabled || !salesModeEnabled}
+                        value={paymentQrUrl}
+                        onChange={(e) => setPaymentQrUrl(e.target.value)}
+                        placeholder="https://yourdomain.com/static/upi_qr.png"
+                      />
+                      {paymentQrUrl && (
+                        <div className="mt-1 border border-border/80 rounded-xl p-2 max-w-[120px] bg-muted/40">
+                          <img src={paymentQrUrl} alt="QR Code Preview" className="h-24 w-24 object-contain mx-auto" onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }} />
+                        </div>
+                      )}
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="paymentInstructions">Payment Instructions Text</Label>
+                      <Textarea
+                        id="paymentInstructions"
+                        disabled={disabled || !salesModeEnabled}
+                        value={paymentInstructions}
+                        onChange={(e) => setPaymentInstructions(e.target.value)}
+                        placeholder="e.g. Please transfer ₹999 to UPI ID: store@upi and reply with a screenshot."
+                        className="min-h-[70px]"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
