@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, Sparkles, CheckCircle2, Trash2, Eye, EyeOff, ShieldCheck, PlayCircle, Settings, HelpCircle, UserCheck, Tag, Info } from 'lucide-react';
+import { Loader2, Sparkles, CheckCircle2, Trash2, Eye, EyeOff, ShieldCheck, PlayCircle, Settings, HelpCircle, UserCheck, Tag, Info, Database, ShoppingBag } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { canEditSettings } from '@/lib/auth/roles';
 import { createClient } from '@/lib/supabase/client';
@@ -90,6 +90,22 @@ export function AiSalesConfig() {
   // Agent Scope Restrictions
   const [restrictToAgentIds, setRestrictToAgentIds] = useState<string[]>([]);
   const [teamMembers, setTeamMembers] = useState<{user_id: string; full_name: string; account_role: string}[]>([]);
+
+  // Storage Settings
+  const [storageProvider, setStorageProvider] = useState<'supabase' | 'cloudinary' | 'mega' | 'google_drive'>('supabase');
+  const [cloudinaryCloudName, setCloudinaryCloudName] = useState('');
+  const [cloudinaryApiKey, setCloudinaryApiKey] = useState('');
+  const [cloudinaryApiSecret, setCloudinaryApiSecret] = useState('');
+  const [cloudinaryApiSecretEdited, setCloudinaryApiSecretEdited] = useState(false);
+  const [hasStoredCloudinaryApiSecret, setHasStoredCloudinaryApiSecret] = useState(false);
+
+  // Products Catalog
+  const [products, setProducts] = useState<any[]>([]);
+  const [loadingProducts, setLoadingProducts] = useState(false);
+  const [newProductName, setNewProductName] = useState('');
+  const [newProductPrice, setNewProductPrice] = useState('');
+  const [newProductFileUrl, setNewProductFileUrl] = useState('');
+  const [uploadingFile, setUploadingFile] = useState(false);
 
   // Auto-Categorization
   const [autoCategorizeEnabled, setAutoCategorizeEnabled] = useState(false);
@@ -201,6 +217,14 @@ export function AiSalesConfig() {
         // Agent restriction
         setRestrictToAgentIds(Array.isArray(data.restrict_to_agent_ids) ? data.restrict_to_agent_ids : []);
 
+        // Storage provider
+        setStorageProvider(data.storage_provider ?? 'supabase');
+        setCloudinaryCloudName(data.cloudinary_cloud_name ?? '');
+        setCloudinaryApiKey(data.cloudinary_api_key ?? '');
+        setHasStoredCloudinaryApiSecret(Boolean(data.has_cloudinary_api_secret));
+        setCloudinaryApiSecret(data.has_cloudinary_api_secret ? MASKED_KEY : '');
+        setCloudinaryApiSecretEdited(false);
+
         setHasStoredKey(Boolean(data.has_key));
         setApiKey(data.has_key ? MASKED_KEY : '');
         setKeyEdited(false);
@@ -215,10 +239,137 @@ export function AiSalesConfig() {
     }
   }, []);
 
-  // Load team members on mount
+  // Products loader
+  const fetchProducts = useCallback(async () => {
+    setLoadingProducts(true);
+    try {
+      const res = await fetch('/api/ai/products');
+      if (res.ok) {
+        const data = await res.json();
+        setProducts(data.products || []);
+      }
+    } catch (err) {
+      console.error('Failed to load products:', err);
+    } finally {
+      setLoadingProducts(false);
+    }
+  }, []);
+
+  const handleAddProduct = async () => {
+    if (!newProductName.trim()) {
+      toast.error('Product name is required');
+      return;
+    }
+    const price = Number(newProductPrice);
+    if (isNaN(price) || price < 0) {
+      toast.error('Invalid price');
+      return;
+    }
+    if (!newProductFileUrl.trim()) {
+      toast.error('File link or upload is required');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/ai/products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newProductName.trim(),
+          price,
+          file_url: newProductFileUrl.trim(),
+        })
+      });
+      if (res.ok) {
+        toast.success('Product added successfully!');
+        setNewProductName('');
+        setNewProductPrice('');
+        setNewProductFileUrl('');
+        void fetchProducts();
+      } else {
+        const data = await res.json();
+        toast.error(data.error || 'Failed to add product');
+      }
+    } catch {
+      toast.error('Failed to add product');
+    }
+  };
+
+  const handleDeleteProduct = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this product?')) return;
+    try {
+      const res = await fetch(`/api/ai/products?id=${id}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        toast.success('Product deleted.');
+        void fetchProducts();
+      } else {
+        toast.error('Failed to delete product');
+      }
+    } catch {
+      toast.error('Failed to delete product');
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingFile(true);
+    try {
+      if (storageProvider === 'supabase') {
+        const fileName = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+        const { data, error } = await supabase.storage
+          .from('product-delivery-files')
+          .upload(`public/${fileName}`, file, {
+            cacheControl: '3600',
+            upsert: true
+          });
+        if (error) throw error;
+        
+        const { data: publicUrlData } = supabase.storage
+          .from('product-delivery-files')
+          .getPublicUrl(`public/${fileName}`);
+        
+        setNewProductFileUrl(publicUrlData.publicUrl);
+        toast.success('File uploaded to Supabase Storage!');
+      } else if (storageProvider === 'cloudinary') {
+        const sigRes = await fetch('/api/ai/products/cloudinary-sign');
+        const sigData = await sigRes.json();
+        if (!sigRes.ok) throw new Error(sigData.error || 'Failed to get Cloudinary signature');
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('api_key', sigData.api_key);
+        formData.append('timestamp', sigData.timestamp.toString());
+        formData.append('signature', sigData.signature);
+        formData.append('folder', sigData.folder);
+
+        const uploadRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/auto/upload`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        const uploadData = await uploadRes.json();
+        if (!uploadRes.ok) throw new Error(uploadData.error?.message || 'Cloudinary upload failed');
+
+        setNewProductFileUrl(uploadData.secure_url || uploadData.url);
+        toast.success('File uploaded to Cloudinary!');
+      }
+    } catch (err: any) {
+      console.error('File upload failed:', err);
+      toast.error(`File upload failed: ${err.message || 'Check storage configurations'}`);
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
+  // Load team members and products on mount
   useEffect(() => {
     fetchTeamMembers();
-  }, [fetchTeamMembers]);
+    void fetchProducts();
+  }, [fetchTeamMembers, fetchProducts]);
 
   useEffect(() => {
     if (!accountId || loadedAccountIdRef.current === accountId) return;
@@ -300,6 +451,10 @@ export function AiSalesConfig() {
           razorpay_key_id: razorpayKeyId.trim() || null,
           razorpay_key_secret: razorpayKeySecretEdited ? (razorpayKeySecret.trim() || null) : undefined,
           razorpay_webhook_secret: razorpayWebhookSecret.trim() || null,
+          storage_provider: storageProvider,
+          cloudinary_cloud_name: cloudinaryCloudName.trim() || null,
+          cloudinary_api_key: cloudinaryApiKey.trim() || null,
+          cloudinary_api_secret: cloudinaryApiSecretEdited ? (cloudinaryApiSecret.trim() || null) : undefined,
         }),
       });
       const data = await res.json();
@@ -343,6 +498,12 @@ export function AiSalesConfig() {
         setRazorpayKeySecret('');
         setRazorpayWebhookSecret('');
         setRestrictToAgentIds([]);
+        setStorageProvider('supabase');
+        setCloudinaryCloudName('');
+        setCloudinaryApiKey('');
+        setCloudinaryApiSecret('');
+        setCloudinaryApiSecretEdited(false);
+        setHasStoredCloudinaryApiSecret(false);
         setHasStoredKey(false);
         setHasStoredEmbeddingsKey(false);
       } else {
@@ -917,6 +1078,217 @@ export function AiSalesConfig() {
                         className="min-h-[70px]"
                       />
                     </div>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* STORAGE CONFIGURATION CARD */}
+          <Card className="border-border/60 shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Database className="h-5 w-5 text-primary" />
+                Product File Storage Provider
+              </CardTitle>
+              <CardDescription>
+                Select which cloud storage service to use for hosting and uploading your digital goods.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-2">
+                <Label htmlFor="storageProvider">Active Storage Provider</Label>
+                <select
+                  id="storageProvider"
+                  disabled={disabled}
+                  value={storageProvider}
+                  onChange={(e) => setStorageProvider(e.target.value as any)}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <option value="supabase">Supabase Storage (Built-in Public Bucket)</option>
+                  <option value="cloudinary">Cloudinary Media Cloud</option>
+                  <option value="mega">Mega.nz (Paste share links only)</option>
+                  <option value="google_drive">Google Drive (Paste share links only)</option>
+                </select>
+              </div>
+
+              {storageProvider === 'cloudinary' && (
+                <div className="grid gap-3 border border-primary/20 rounded-xl p-4 bg-primary/5 animate-in fade-in duration-200">
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="cloudinaryCloudName">Cloudinary Cloud Name</Label>
+                    <Input
+                      id="cloudinaryCloudName"
+                      disabled={disabled}
+                      value={cloudinaryCloudName}
+                      onChange={(e) => setCloudinaryCloudName(e.target.value)}
+                      placeholder="e.g. gnk-edu-cloud"
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="cloudinaryApiKey">Cloudinary API Key</Label>
+                    <Input
+                      id="cloudinaryApiKey"
+                      disabled={disabled}
+                      value={cloudinaryApiKey}
+                      onChange={(e) => setCloudinaryApiKey(e.target.value)}
+                      placeholder="Enter API Key"
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="cloudinaryApiSecret">Cloudinary API Secret</Label>
+                    <Input
+                      id="cloudinaryApiSecret"
+                      type="password"
+                      disabled={disabled}
+                      value={cloudinaryApiSecret}
+                      onChange={(e) => { setCloudinaryApiSecret(e.target.value); setCloudinaryApiSecretEdited(true); }}
+                      onFocus={() => { if (!cloudinaryApiSecretEdited && hasStoredCloudinaryApiSecret) { setCloudinaryApiSecret(''); setCloudinaryApiSecretEdited(true); } }}
+                      placeholder={hasStoredCloudinaryApiSecret ? MASKED_KEY : 'Enter Cloudinary API Secret'}
+                    />
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* PRODUCTS CATALOG MANAGEMENT CARD */}
+          <Card className="border-border/60 shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShoppingBag className="h-5 w-5 text-primary" />
+                Products & Files Catalog
+              </CardTitle>
+              <CardDescription>
+                Manage your digital products, pricing, and files. The AI Sales Agent will automatically suggest these items to buyers.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Add Product Form */}
+              <div className="border border-border/80 rounded-xl p-4 bg-muted/20 grid gap-4">
+                <h4 className="text-sm font-bold text-foreground">Add New Product</h4>
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="newProdName">Product Name</Label>
+                    <Input
+                      id="newProdName"
+                      disabled={disabled}
+                      value={newProductName}
+                      onChange={(e) => setNewProductName(e.target.value)}
+                      placeholder="e.g. Physics Class 12 Notes"
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="newProdPrice">Price (₹ INR)</Label>
+                    <Input
+                      id="newProdPrice"
+                      type="number"
+                      disabled={disabled}
+                      value={newProductPrice}
+                      onChange={(e) => setNewProductPrice(e.target.value)}
+                      placeholder="e.g. 99"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-2">
+                  <Label>Product File Delivery Link</Label>
+                  
+                  {['supabase', 'cloudinary'].includes(storageProvider) ? (
+                    <div className="flex items-center gap-3">
+                      <Input
+                        disabled={true}
+                        value={newProductFileUrl}
+                        placeholder="Upload a file using the button on the right..."
+                        className="flex-1"
+                      />
+                      <label className={`h-10 px-4 flex items-center justify-center rounded-md text-sm font-semibold cursor-pointer border shadow-sm transition-colors ${
+                        uploadingFile ? 'bg-secondary text-muted-foreground' : 'bg-primary text-primary-foreground hover:bg-primary/90'
+                      }`}>
+                        {uploadingFile ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> Uploading...
+                          </>
+                        ) : (
+                          <>Upload File</>
+                        )}
+                        <input
+                          type="file"
+                          className="hidden"
+                          disabled={uploadingFile || disabled}
+                          onChange={handleFileUpload}
+                        />
+                      </label>
+                    </div>
+                  ) : (
+                    <Input
+                      disabled={disabled}
+                      value={newProductFileUrl}
+                      onChange={(e) => setNewProductFileUrl(e.target.value)}
+                      placeholder={storageProvider === 'google_drive' ? 'Paste Google Drive share URL...' : 'Paste Mega.nz share URL...'}
+                    />
+                  )}
+                  <p className="text-[11px] text-muted-foreground">
+                    {['supabase', 'cloudinary'].includes(storageProvider) 
+                      ? 'Upload file to deliver direct attachments on WhatsApp.' 
+                      : 'Copy the share link from Google Drive / Mega and paste it here.'}
+                  </p>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <Button
+                    size="sm"
+                    onClick={handleAddProduct}
+                    disabled={disabled || uploadingFile || !newProductName.trim() || !newProductPrice.trim() || !newProductFileUrl.trim()}
+                  >
+                    Add Product
+                  </Button>
+                </div>
+              </div>
+
+              {/* Products Table */}
+              <div className="space-y-2">
+                <h4 className="text-sm font-bold text-foreground">Active Catalog</h4>
+                {loadingProducts ? (
+                  <div className="text-center py-6 text-xs text-muted-foreground">Loading products list...</div>
+                ) : products.length === 0 ? (
+                  <div className="text-center py-8 border border-dashed border-border/80 rounded-xl text-sm text-muted-foreground">
+                    No products added to the catalog yet.
+                  </div>
+                ) : (
+                  <div className="border border-border/40 rounded-xl overflow-hidden shadow-sm">
+                    <table className="min-w-full divide-y divide-border/20 text-sm">
+                      <thead className="bg-muted/40">
+                        <tr>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase">Product Name</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase w-24">Price</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase">File URL</th>
+                          <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase w-16">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/20 bg-background">
+                        {products.map((p) => (
+                          <tr key={p.id} className="hover:bg-muted/10">
+                            <td className="px-4 py-3 font-medium text-foreground">{p.name}</td>
+                            <td className="px-4 py-3 font-semibold text-primary">₹{p.price}</td>
+                            <td className="px-4 py-3 text-muted-foreground max-w-[200px] truncate text-xs">
+                              <a href={p.file_url} target="_blank" rel="noopener noreferrer" className="hover:underline hover:text-primary">
+                                {p.file_url}
+                              </a>
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7 text-destructive hover:bg-destructive/10"
+                                onClick={() => handleDeleteProduct(p.id)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>

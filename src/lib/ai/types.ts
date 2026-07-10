@@ -61,6 +61,12 @@ export interface AiConfig {
   razorpayKeyId?: string | null
   razorpayKeySecret?: string | null
   razorpayWebhookSecret?: string | null
+
+  // Storage settings
+  storageProvider?: 'supabase' | 'cloudinary' | 'mega' | 'google_drive'
+  cloudinaryCloudName?: string | null
+  cloudinaryApiKey?: string | null
+  cloudinaryApiSecret?: string | null
 }
 
 export interface AiAgentConfig {

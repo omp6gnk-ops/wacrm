@@ -190,12 +190,27 @@ export async function dispatchInboundToAiReply(
         latestUserMessage(messages),
       )
 
+      let customSalesPrompt = config.salesSystemPrompt || ''
+      if (config.salesModeEnabled) {
+        const { data: catalog } = await db
+          .from('ai_products')
+          .select('id, name, price')
+          .eq('account_id', accountId)
+
+        if (catalog && catalog.length > 0) {
+          const catalogText = catalog
+            .map((p) => `- Product Name: "${p.name}", Price: ₹${p.price}, ID: "${p.id}"`)
+            .join('\n')
+          customSalesPrompt = `${customSalesPrompt}\n\nAVAILABLE PRODUCTS IN CATALOG (Use these exact IDs to generate links):\n${catalogText}\n\nIMPORTANT: When generating a payment link, call the generate_payment_link tool passing ONLY the exact product_id. Do not hallucinate or guess any other details.`
+        }
+      }
+
       systemPrompt = buildSystemPrompt({
         userPrompt: config.systemPrompt,
         mode: 'auto_reply',
         knowledge,
         salesModeEnabled: config.salesModeEnabled,
-        salesSystemPrompt: config.salesSystemPrompt,
+        salesSystemPrompt: customSalesPrompt,
         collectFields: config.collectFields,
       })
     }

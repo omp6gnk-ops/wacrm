@@ -30,21 +30,12 @@ export async function generateOpenAi(args: ProviderArgs): Promise<string> {
         parameters: {
           type: 'object',
           properties: {
-            amount: {
-              type: 'number',
-              description: 'The product price in INR (e.g. 99 or 149).'
-            },
-            product_name: {
+            product_id: {
               type: 'string',
-              description: 'The name of the product being purchased (e.g. "Physics PDF notes").'
-            },
-            delivery_files: {
-              type: 'array',
-              items: { type: 'string' },
-              description: 'An array of URLs of files to deliver to the customer\'s WhatsApp number after successful payment (e.g., Google Drive links).'
+              description: 'The UUID of the product the customer wants to purchase (from the available products list).'
             }
           },
-          required: ['amount', 'product_name', 'delivery_files']
+          required: ['product_id']
         }
       }
     }
@@ -106,13 +97,26 @@ export async function generateOpenAi(args: ProviderArgs): Promise<string> {
         if (toolCall.function.name === 'generate_payment_link') {
           try {
             const params = JSON.parse(toolCall.function.arguments)
+            const db = (await import('../admin-client')).supabaseAdmin()
+            
+            // Query the product catalog
+            const { data: product, error: prodErr } = await db
+              .from('ai_products')
+              .select('name, price, file_url')
+              .eq('id', params.product_id)
+              .maybeSingle()
+
+            if (prodErr || !product) {
+              throw new Error(`Product with ID ${params.product_id} not found in the catalog.`)
+            }
+
             const { createRazorpayLink } = await import('../../razorpay/link')
             const paymentLink = await createRazorpayLink({
               accountId: args.accountId!,
               conversationId: args.conversationId!,
-              amount: params.amount,
-              productName: params.product_name,
-              deliveryFiles: params.delivery_files,
+              amount: product.price,
+              productName: product.name,
+              deliveryFiles: [product.file_url],
             })
 
             messagesPayload.push({
