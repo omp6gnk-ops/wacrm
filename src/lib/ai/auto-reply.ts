@@ -50,7 +50,7 @@ export async function dispatchInboundToAiReply(
   try {
     const db = supabaseAdmin()
 
-    const config = await loadAiConfig(db, accountId)
+    const config = await loadAiConfig(db, accountId, { requireActive: false })
     if (!config) return
 
     // Trigger on button reply gate
@@ -108,9 +108,9 @@ export async function dispatchInboundToAiReply(
       }
     }
 
-    // If not in assistant mode, check if global auto-reply is enabled
+    // If not in assistant mode, check if global auto-reply and global active master switch are enabled
     if (!isAssistantMode) {
-      if (!config.autoReplyEnabled) return
+      if (!config.isActive || !config.autoReplyEnabled) return
     }
 
     // Apply Agent Scope Restrictions if not in assistant mode
