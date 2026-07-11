@@ -94,16 +94,26 @@ export function ConversationList({
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedStatusId, setSelectedStatusId] = useState<string | null>(null);
 
-  const [limit, setLimit] = useState(50);
+  const [limit, setLimit] = useState(100);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
 
   // Reset limit and hasMore when filters or resync token changes
   useEffect(() => {
-    setLimit(50);
+    setLimit(100);
     setHasMore(true);
     setLoadingMore(false);
-  }, [showExpiredOnly, assignmentFilter, selectedAgentId, resyncToken]);
+  }, [
+    showExpiredOnly,
+    assignmentFilter,
+    selectedAgentId,
+    resyncToken,
+    filter,
+    selectedStatusId,
+    selectedTagIds,
+    selectedCompany,
+    search
+  ]);
 
   // Keep the latest callback in a ref so the fetch effect below can
   // have a stable, empty-dep identity. Previously the fetch useCallback
@@ -142,6 +152,61 @@ export function ConversationList({
       query = query.eq('assigned_agent_id', selectedAgentId);
     }
 
+    // Server-side inbox filter
+    if (filter === "unread") {
+      query = query.gt("unread_count", 0);
+    } else if (filter === "new_inbound") {
+      query = query.gt("unread_count", 0).eq("has_agent_replied", false);
+    } else if (filter === "reply_to_agent") {
+      query = query.gt("unread_count", 0).eq("has_agent_replied", true);
+    } else if (filter === "seen_unreplied") {
+      query = query.eq("unread_count", 0);
+    }
+
+    // Server-side custom status filter
+    if (selectedStatusId !== null) {
+      query = query.eq("custom_status_id", selectedStatusId);
+    }
+
+    // Server-side contacts & tags filter
+    if (selectedTagIds.length > 0 || selectedCompany !== null) {
+      let matchedContactIds: string[] = [];
+      let filtersApplied = false;
+
+      if (selectedCompany !== null) {
+        const { data: companyContacts } = await supabase
+          .from("contacts")
+          .select("id")
+          .eq("company", selectedCompany);
+        matchedContactIds = (companyContacts ?? []).map((c) => c.id);
+        filtersApplied = true;
+      }
+
+      if (selectedTagIds.length > 0) {
+        const { data: tagContactTags } = await supabase
+          .from("contact_tags")
+          .select("contact_id")
+          .in("tag_id", selectedTagIds);
+        const tagContactIds = (tagContactTags ?? []).map((t) => t.contact_id);
+
+        if (filtersApplied) {
+          matchedContactIds = matchedContactIds.filter((id) => tagContactIds.includes(id));
+        } else {
+          matchedContactIds = tagContactIds;
+        }
+        filtersApplied = true;
+      }
+
+      if (filtersApplied) {
+        if (matchedContactIds.length > 0) {
+          query = query.in("contact_id", matchedContactIds);
+        } else {
+          // No contacts match, return empty result
+          query = query.eq("id", "00000000-0000-0000-0000-000000000000");
+        }
+      }
+    }
+
     if (search.trim()) {
       const s = search.trim();
       const { data: matchedContacts } = await supabase
@@ -169,12 +234,23 @@ export function ConversationList({
     }
     setLoading(false);
     setLoadingMore(false);
-  }, [showExpiredOnly, assignmentFilter, currentUserId, selectedAgentId, search, limit]);
+  }, [
+    showExpiredOnly,
+    assignmentFilter,
+    currentUserId,
+    selectedAgentId,
+    search,
+    limit,
+    filter,
+    selectedStatusId,
+    selectedTagIds,
+    selectedCompany
+  ]);
 
   const loadMore = useCallback(() => {
     if (!hasMore || loading || loadingMore) return;
     setLoadingMore(true);
-    setLimit((prev) => prev + 50);
+    setLimit((prev) => prev + 100);
   }, [hasMore, loading, loadingMore]);
 
   const observer = useRef<IntersectionObserver | null>(null);

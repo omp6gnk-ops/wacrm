@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Loader2, Sparkles, CheckCircle2, Trash2, Eye, EyeOff, ShieldCheck, PlayCircle, Settings, HelpCircle, UserCheck, Tag, Info, Database, ShoppingBag, Upload } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
@@ -108,13 +108,24 @@ export function AiSalesConfig() {
   const [uploadingFile, setUploadingFile] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredProducts = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return products;
+    return products.filter(p => 
+      (p.name?.toLowerCase().includes(query)) || 
+      (p.price?.toString().includes(query)) ||
+      (p.file_url?.toLowerCase().includes(query))
+    );
+  }, [products, searchQuery]);
 
   useEffect(() => {
-    const total = Math.ceil(products.length / itemsPerPage);
+    const total = Math.ceil(filteredProducts.length / itemsPerPage);
     if (currentPage > total && total > 0) {
       setCurrentPage(total);
     }
-  }, [products.length, currentPage]);
+  }, [filteredProducts.length, currentPage]);
 
   // Auto-Categorization
   const [autoCategorizeEnabled, setAutoCategorizeEnabled] = useState(false);
@@ -659,8 +670,8 @@ export function AiSalesConfig() {
     );
   }
 
-  const totalPages = Math.ceil(products.length / itemsPerPage);
-  const paginatedProducts = products.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
+  const paginatedProducts = filteredProducts.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const disabled = !canEdit || saving || testing || removing;
 
@@ -1393,16 +1404,36 @@ export function AiSalesConfig() {
               </div>
 
               {/* Products Table */}
-              <div className="space-y-2">
-                <h4 className="text-sm font-bold text-foreground">Active Catalog</h4>
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
+                  <h4 className="text-sm font-bold text-foreground">Active Catalog</h4>
+                  {products.length > 0 && (
+                    <div className="w-full sm:w-64">
+                      <Input
+                        type="text"
+                        placeholder="Search products..."
+                        value={searchQuery}
+                        onChange={(e) => {
+                          setSearchQuery(e.target.value);
+                          setCurrentPage(1);
+                        }}
+                        className="h-8 text-xs placeholder:text-muted-foreground/60"
+                      />
+                    </div>
+                  )}
+                </div>
                 {loadingProducts ? (
                   <div className="text-center py-6 text-xs text-muted-foreground">Loading products list...</div>
                 ) : products.length === 0 ? (
                   <div className="text-center py-8 border border-dashed border-border/80 rounded-xl text-sm text-muted-foreground">
                     No products added to the catalog yet.
                   </div>
+                ) : filteredProducts.length === 0 ? (
+                  <div className="text-center py-8 border border-dashed border-border/60 rounded-xl text-xs text-muted-foreground bg-muted/5 animate-in fade-in duration-200">
+                    No products match your search query.
+                  </div>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="space-y-4 animate-in fade-in duration-200">
                     <div className="border border-border/40 rounded-xl overflow-hidden shadow-sm bg-background">
                       <table className="min-w-full divide-y divide-border/20 text-sm">
                         <thead className="bg-muted/40">
@@ -1443,7 +1474,7 @@ export function AiSalesConfig() {
                     {totalPages > 1 && (
                       <div className="flex items-center justify-between pt-2 text-xs">
                         <div className="text-muted-foreground">
-                          Showing {Math.min((currentPage - 1) * itemsPerPage + 1, products.length)}-{Math.min(currentPage * itemsPerPage, products.length)} of {products.length} products
+                          Showing {Math.min((currentPage - 1) * itemsPerPage + 1, filteredProducts.length)}-{Math.min(currentPage * itemsPerPage, filteredProducts.length)} of {filteredProducts.length} products
                         </div>
                         <div className="flex items-center gap-1.5">
                           <Button
