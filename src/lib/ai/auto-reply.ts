@@ -194,6 +194,83 @@ export async function dispatchInboundToAiReply(
     const messages = await buildConversationContext(db, conversationId)
     if (messages.length === 0) return
 
+    // Hook to check if the user is asking for a demo
+    const userText = latestUserMessage(messages)
+    const normalizedText = userText.toLowerCase().trim()
+
+    if (normalizedText.includes('demo')) {
+      const { data: cannedResponses } = await db
+        .from('canned_responses')
+        .select('*')
+        .eq('account_id', accountId)
+        .in('shortcut', ['decedemo', '/decedemo'])
+
+      if (cannedResponses && cannedResponses.length > 0) {
+        const activeMaxReplies = isAssistantMode ? assistantMaxReplies : config.autoReplyMaxPerConversation
+        const { data: claimed, error: claimErr } = await db.rpc(
+          'claim_ai_reply_slot',
+          {
+            conversation_id: conversationId,
+            max_replies: activeMaxReplies,
+          },
+        )
+        if (claimErr) {
+          console.error('[ai auto-reply] claim_ai_reply_slot failed:', claimErr)
+          return
+        }
+        if (claimed === true) {
+          const sorted = [...cannedResponses].sort((a, b) => {
+            const posA = a.position ?? 0
+            const posB = b.position ?? 0
+            if (posA !== posB) return posA - posB
+            const timeA = a.created_at ? new Date(a.created_at).getTime() : 0
+            const timeB = b.created_at ? new Date(b.created_at).getTime() : 0
+            return timeA - timeB
+          })
+
+          const { engineSendText, engineSendMedia, engineSendCtaUrl } = await import('@/lib/flows/meta-send')
+
+          for (const item of sorted) {
+            try {
+              if (item.button_text && item.button_url) {
+                await engineSendCtaUrl({
+                  accountId,
+                  userId: configOwnerUserId,
+                  conversationId,
+                  contactId,
+                  bodyText: item.message_text,
+                  buttonDisplayText: item.button_text,
+                  buttonUrl: item.button_url,
+                })
+              } else if (item.media_url && item.media_type) {
+                await engineSendMedia({
+                  accountId,
+                  userId: configOwnerUserId,
+                  conversationId,
+                  contactId,
+                  kind: item.media_type,
+                  link: item.media_url,
+                  caption: item.message_text,
+                })
+              } else if (item.message_text.trim()) {
+                await engineSendText({
+                  accountId,
+                  userId: configOwnerUserId,
+                  conversationId,
+                  contactId,
+                  text: item.message_text.trim(),
+                })
+              }
+            } catch (sendErr) {
+              console.error('[ai auto-reply] failed to send canned response item:', sendErr)
+            }
+            await new Promise((resolve) => setTimeout(resolve, 500))
+          }
+          return // Handled via canned replies hook!
+        }
+      }
+    }
+
     let systemPrompt = ''
     if (isAssistantMode) {
       systemPrompt = assistantPrompt
