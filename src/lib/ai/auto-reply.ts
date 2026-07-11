@@ -85,6 +85,29 @@ export async function dispatchInboundToAiReply(
       .eq('id', conversationId)
       .maybeSingle()
     if (convErr || !conv) return
+
+    // Check if the reply count and disabled state should be reset due to inactivity
+    const resetMinutes = config.aiReplyLimitResetMinutes ?? 240
+    const { data: lastMsg } = await db
+      .from('messages')
+      .select('created_at')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (lastMsg) {
+      const minutesSinceLastActive = (Date.now() - new Date(lastMsg.created_at).getTime()) / (1000 * 60)
+      if (minutesSinceLastActive >= resetMinutes) {
+        await db
+          .from('conversations')
+          .update({ ai_reply_count: 0, ai_autoreply_disabled: false })
+          .eq('id', conversationId)
+        conv.ai_reply_count = 0
+        conv.ai_autoreply_disabled = false
+      }
+    }
+
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
 
     // Check for Agent-Specific Assistant AI config
@@ -152,27 +175,6 @@ export async function dispatchInboundToAiReply(
           // Human agent is actively chatting - stand down.
           return
         }
-      }
-    }
-
-    // Check if the reply count should be reset due to inactivity
-    const resetMinutes = config.aiReplyLimitResetMinutes ?? 240
-    const { data: lastMsg } = await db
-      .from('messages')
-      .select('created_at')
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    if (lastMsg) {
-      const minutesSinceLastActive = (Date.now() - new Date(lastMsg.created_at).getTime()) / (1000 * 60)
-      if (minutesSinceLastActive >= resetMinutes) {
-        await db
-          .from('conversations')
-          .update({ ai_reply_count: 0 })
-          .eq('id', conversationId)
-        conv.ai_reply_count = 0
       }
     }
 
