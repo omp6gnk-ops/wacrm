@@ -109,6 +109,7 @@ export function AiSalesConfig() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
 
   const filteredProducts = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -126,6 +127,10 @@ export function AiSalesConfig() {
       setCurrentPage(total);
     }
   }, [filteredProducts.length, currentPage]);
+
+  useEffect(() => {
+    setSelectedProductIds([]);
+  }, [products, currentPage, searchQuery]);
 
   // Auto-Categorization
   const [autoCategorizeEnabled, setAutoCategorizeEnabled] = useState(false);
@@ -441,6 +446,88 @@ export function AiSalesConfig() {
       }
     };
     reader.readAsText(file);
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedProductIds.length === 0) return;
+    if (!confirm(`Are you sure you want to delete ${selectedProductIds.length} products?`)) return;
+
+    try {
+      const res = await fetch(`/api/ai/products?id=${selectedProductIds.join(',')}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        toast.success(`Deleted ${selectedProductIds.length} products successfully!`);
+        setSelectedProductIds([]);
+        void fetchProducts();
+      } else {
+        toast.error('Failed to delete selected products');
+      }
+    } catch {
+      toast.error('Failed to delete selected products');
+    }
+  };
+
+  const handleBulkPriceChange = async (price: number) => {
+    if (selectedProductIds.length === 0) return;
+    if (isNaN(price) || price < 0) {
+      toast.error('Please enter a valid price');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/ai/products', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids: selectedProductIds,
+          price,
+        }),
+      });
+      if (res.ok) {
+        toast.success(`Updated price for ${selectedProductIds.length} products!`);
+        setSelectedProductIds([]);
+        const input = document.getElementById('bulkPriceInput') as HTMLInputElement;
+        if (input) input.value = '';
+        void fetchProducts();
+      } else {
+        toast.error('Failed to update product prices');
+      }
+    } catch {
+      toast.error('Failed to update product prices');
+    }
+  };
+
+  const handleBulkNameChange = async (action: 'prefix' | 'suffix', text: string) => {
+    if (selectedProductIds.length === 0) return;
+    if (!text.trim()) {
+      toast.error('Please enter prefix or suffix text');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/ai/products', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids: selectedProductIds,
+          nameAction: action,
+          prefix: action === 'prefix' ? text : undefined,
+          suffix: action === 'suffix' ? text : undefined,
+        }),
+      });
+      if (res.ok) {
+        toast.success(`Updated name for ${selectedProductIds.length} products!`);
+        setSelectedProductIds([]);
+        const input = document.getElementById('bulkNameTextInput') as HTMLInputElement;
+        if (input) input.value = '';
+        void fetchProducts();
+      } else {
+        toast.error('Failed to rename products');
+      }
+    } catch {
+      toast.error('Failed to rename products');
+    }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1434,10 +1521,105 @@ export function AiSalesConfig() {
                   </div>
                 ) : (
                   <div className="space-y-4 animate-in fade-in duration-200">
+                    {/* Bulk Action Controls */}
+                    {selectedProductIds.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-xl animate-in slide-in-from-top-2 duration-200">
+                        <span className="text-xs font-medium text-foreground">
+                          Selected <strong>{selectedProductIds.length}</strong> of <strong>{filteredProducts.length}</strong> products
+                        </span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            className="h-8 text-xs gap-1"
+                            onClick={handleBulkDelete}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Delete
+                          </Button>
+
+                          <div className="flex items-center gap-1.5 border-l border-border pl-3">
+                            <Input
+                              type="number"
+                              placeholder="New price (₹)..."
+                              className="h-8 w-24 text-xs bg-background"
+                              id="bulkPriceInput"
+                            />
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 text-xs"
+                              onClick={() => {
+                                const input = document.getElementById('bulkPriceInput') as HTMLInputElement;
+                                if (input) handleBulkPriceChange(Number(input.value));
+                              }}
+                            >
+                              Update Price
+                            </Button>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 border-l border-border pl-3">
+                            <select
+                              id="bulkNameActionSelect"
+                              className="flex h-8 rounded-md border border-input bg-background px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            >
+                              <option value="prefix">Add Prefix</option>
+                              <option value="suffix">Add Suffix</option>
+                            </select>
+                            <Input
+                              type="text"
+                              placeholder="Text..."
+                              className="h-8 w-24 text-xs bg-background"
+                              id="bulkNameTextInput"
+                            />
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 text-xs"
+                              onClick={() => {
+                                const action = (document.getElementById('bulkNameActionSelect') as HTMLSelectElement).value as 'prefix' | 'suffix';
+                                const text = (document.getElementById('bulkNameTextInput') as HTMLInputElement).value;
+                                handleBulkNameChange(action, text);
+                              }}
+                            >
+                              Update Name
+                            </Button>
+                          </div>
+                          
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 text-xs text-muted-foreground ml-auto hover:text-foreground"
+                            onClick={() => setSelectedProductIds([])}
+                          >
+                            Clear Selection
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="border border-border/40 rounded-xl overflow-hidden shadow-sm bg-background">
                       <table className="min-w-full divide-y divide-border/20 text-sm">
                         <thead className="bg-muted/40">
                           <tr>
+                            <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground w-10">
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 rounded border-gray-300 text-primary cursor-pointer focus:ring-primary accent-primary"
+                                checked={
+                                  filteredProducts.length > 0 &&
+                                  filteredProducts.every((p) => selectedProductIds.includes(p.id))
+                                }
+                                onChange={(e) => {
+                                  const checked = e.target.checked;
+                                  if (checked) {
+                                    setSelectedProductIds(filteredProducts.map((p) => p.id));
+                                  } else {
+                                    setSelectedProductIds([]);
+                                  }
+                                }}
+                              />
+                            </th>
                             <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase">Product Name</th>
                             <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase w-24">Price</th>
                             <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase">File URL</th>
@@ -1447,6 +1629,21 @@ export function AiSalesConfig() {
                         <tbody className="divide-y divide-border/20 bg-background">
                           {paginatedProducts.map((p) => (
                             <tr key={p.id} className="hover:bg-muted/10">
+                              <td className="px-4 py-3 w-10">
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4 rounded border-gray-300 text-primary cursor-pointer focus:ring-primary accent-primary"
+                                  checked={selectedProductIds.includes(p.id)}
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    if (checked) {
+                                      setSelectedProductIds((prev) => [...prev, p.id]);
+                                    } else {
+                                      setSelectedProductIds((prev) => prev.filter((id) => id !== p.id));
+                                    }
+                                  }}
+                                />
+                              </td>
                               <td className="px-4 py-3 font-medium text-foreground">{p.name}</td>
                               <td className="px-4 py-3 font-semibold text-primary">₹{p.price}</td>
                               <td className="px-4 py-3 text-muted-foreground max-w-[200px] truncate text-xs">

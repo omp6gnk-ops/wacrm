@@ -51,7 +51,7 @@ export async function dispatchInboundToAiReply(
     const db = supabaseAdmin()
 
     const config = await loadAiConfig(db, accountId)
-    if (!config || !config.autoReplyEnabled) return
+    if (!config) return
 
     // Trigger on button reply gate
     // If the latest message was an interactive button reply, but triggerOnButtonReply is disabled, stand down
@@ -106,6 +106,11 @@ export async function dispatchInboundToAiReply(
         assistantPrompt = agentConfig.system_prompt
         assistantMaxReplies = agentConfig.max_replies
       }
+    }
+
+    // If not in assistant mode, check if global auto-reply is enabled
+    if (!isAssistantMode) {
+      if (!config.autoReplyEnabled) return
     }
 
     // Apply Agent Scope Restrictions if not in assistant mode

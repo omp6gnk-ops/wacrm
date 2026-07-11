@@ -1,36 +1,41 @@
 "use client"
 
 import * as React from "react"
-import { Switch as SwitchPrimitive } from "@base-ui/react/switch"
-
 import { cn } from "@/lib/utils"
 
-// Root: primary token when checked (responds to the active color theme),
-// slate when unchecked.
+export interface SwitchProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange'> {
+  checked?: boolean
+  onCheckedChange?: (checked: boolean) => void
+}
+
 function Switch({
   className,
+  checked,
+  onCheckedChange,
+  disabled,
   ...props
-}: React.ComponentProps<typeof SwitchPrimitive.Root>) {
+}: SwitchProps) {
   return (
-    <SwitchPrimitive.Root
-      data-slot="switch"
-      className={cn(
-        "inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-        "disabled:cursor-not-allowed disabled:opacity-50",
-        "data-[checked]:bg-primary data-[unchecked]:bg-muted",
-        className,
-      )}
-      {...props}
-    >
-      <SwitchPrimitive.Thumb
-        data-slot="switch-thumb"
+    <label className={cn("relative inline-flex items-center cursor-pointer select-none h-5 w-9 shrink-0", disabled && "opacity-50 cursor-not-allowed")}>
+      <input
+        type="checkbox"
+        className="sr-only peer"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onCheckedChange?.(e.target.checked)}
+        {...props}
+      />
+      <div 
         className={cn(
-          "pointer-events-none block h-4 w-4 rounded-full bg-card shadow-sm ring-0 transition-transform",
-          "data-[checked]:translate-x-4 data-[unchecked]:translate-x-0",
+          "w-9 h-5 bg-muted rounded-full transition-colors relative border-2 border-transparent",
+          "peer-focus-visible:ring-2 peer-focus-visible:ring-primary peer-focus-visible:ring-offset-2",
+          "peer-checked:bg-primary",
+          "after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all",
+          "peer-checked:after:translate-x-4",
+          className
         )}
       />
-    </SwitchPrimitive.Root>
+    </label>
   )
 }
 

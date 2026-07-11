@@ -125,15 +125,91 @@ export async function DELETE(request: Request) {
 
     if (!id) return bad('Product id is required')
 
+    const ids = id.split(',')
     const { error } = await supabase
       .from('ai_products')
       .delete()
       .eq('account_id', accountId)
-      .eq('id', id)
+      .in('id', ids)
 
     if (error) {
       console.error('[ai/products DELETE] delete error:', error)
-      return NextResponse.json({ error: 'Failed to delete product' }, { status: 500 })
+      return NextResponse.json({ error: 'Failed to delete product(s)' }, { status: 500 })
+    }
+
+    return NextResponse.json({ success: true })
+  } catch (err) {
+    return toErrorResponse(err)
+  }
+}
+
+/**
+ * PATCH /api/ai/products
+ *
+ * Bulk update products (admin+).
+ */
+export async function PATCH(request: Request) {
+  try {
+    const { supabase, accountId } = await requireRole('admin')
+
+    const body = await request.json().catch(() => null)
+    if (!body || typeof body !== 'object') return bad('Invalid request body')
+
+    const { ids, price, nameAction, prefix, suffix } = body
+    if (!Array.isArray(ids) || ids.length === 0) return bad('Product ids array is required')
+
+    let updateData: Record<string, any> = {}
+
+    if (typeof price === 'number') {
+      if (price < 0) return bad('Price cannot be negative')
+      updateData.price = price
+    }
+
+    if (nameAction === 'prefix' || nameAction === 'suffix') {
+      const { data: existingProducts, error: fetchError } = await supabase
+        .from('ai_products')
+        .select('id, name')
+        .eq('account_id', accountId)
+        .in('id', ids)
+      
+      if (fetchError) {
+        console.error('[ai/products PATCH] fetch error:', fetchError)
+        return NextResponse.json({ error: 'Failed to fetch existing products' }, { status: 500 })
+      }
+
+      const updatePromises = (existingProducts || []).map((p) => {
+        const newName = nameAction === 'prefix' 
+          ? `${prefix ?? ''}${p.name}` 
+          : `${p.name}${suffix ?? ''}`
+        
+        return supabase
+          .from('ai_products')
+          .update({ ...updateData, name: newName })
+          .eq('account_id', accountId)
+          .eq('id', p.id)
+      })
+
+      const results = await Promise.all(updatePromises)
+      const failed = results.find(r => r.error)
+      if (failed) {
+        console.error('[ai/products PATCH bulk rename] update error:', failed.error)
+        return NextResponse.json({ error: 'Failed to update some products' }, { status: 500 })
+      }
+
+      return NextResponse.json({ success: true })
+    }
+
+    if (Object.keys(updateData).length > 0) {
+      const { error } = await supabase
+        .from('ai_products')
+        .update(updateData)
+        .eq('account_id', accountId)
+        .in('id', ids)
+
+      if (error) {
+        console.error('[ai/products PATCH bulk] update error:', error)
+        return NextResponse.json({ error: 'Failed to update products' }, { status: 500 })
+      }
     }
 
     return NextResponse.json({ success: true })
