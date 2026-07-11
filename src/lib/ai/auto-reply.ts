@@ -114,11 +114,12 @@ export async function dispatchInboundToAiReply(
     let isAssistantMode = false
     let assistantPrompt = ''
     let assistantMaxReplies = 3
+    let assistantTakeoverDelay: number | null = null
 
     if (conv.assigned_agent_id) {
       const { data: agentConfig } = await db
         .from('ai_agent_configs')
-        .select('system_prompt, max_replies, is_active')
+        .select('system_prompt, max_replies, is_active, takeover_delay_minutes')
         .eq('account_id', accountId)
         .eq('agent_id', conv.assigned_agent_id)
         .eq('is_active', true)
@@ -128,6 +129,7 @@ export async function dispatchInboundToAiReply(
         isAssistantMode = true
         assistantPrompt = agentConfig.system_prompt
         assistantMaxReplies = agentConfig.max_replies
+        assistantTakeoverDelay = agentConfig.takeover_delay_minutes
       }
     }
 
@@ -151,13 +153,20 @@ export async function dispatchInboundToAiReply(
     }
 
     // Smart agent-activity gate:
-    // If agent NEVER replied -> AI responds INSTANTLY.
-    // If agent HAS replied before -> AI checks if human agent sent any message within
-    // the takeoverMinutes window. If yes, AI stands down.
-    const agentHasReplied = conv.has_agent_replied === true
+    // Determine if a human agent has ever replied to this conversation (to distinguish new vs old chats)
+    const { data: humanMsg } = await db
+      .from('messages')
+      .select('id')
+      .eq('conversation_id', conversationId)
+      .eq('sender_type', 'agent')
+      .limit(1)
+    const humanHasReplied = humanMsg && humanMsg.length > 0
 
-    if (agentHasReplied) {
-      const takeoverMinutes = config.aiTakeoverMinutes ?? 5
+    if (humanHasReplied) {
+      const takeoverMinutes = isAssistantMode
+        ? (assistantTakeoverDelay ?? config.aiTakeoverMinutes ?? 5)
+        : (config.aiTakeoverMinutes ?? 5)
+
       if (takeoverMinutes > 0) {
         const cutoff = new Date(
           Date.now() - takeoverMinutes * 60 * 1000,

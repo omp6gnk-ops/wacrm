@@ -41,6 +41,7 @@ interface AiAgentConfig {
   system_prompt: string;
   max_replies: number;
   is_active: boolean;
+  takeover_delay_minutes?: number;
   updated_at?: string;
 }
 
@@ -54,6 +55,7 @@ export function AiAgentAssistants() {
   const [isActive, setIsActive] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState('');
   const [maxReplies, setMaxReplies] = useState(3);
+  const [takeoverDelayMinutes, setTakeoverDelayMinutes] = useState(5);
   const [saving, setSaving] = useState(false);
 
   const fetchData = useCallback(async () => {
@@ -91,6 +93,7 @@ export function AiAgentAssistants() {
       setIsActive(existing.is_active);
       setSystemPrompt(existing.system_prompt);
       setMaxReplies(existing.max_replies);
+      setTakeoverDelayMinutes(existing.takeover_delay_minutes ?? 5);
     } else {
       setIsActive(false);
       setSystemPrompt(
@@ -99,6 +102,7 @@ export function AiAgentAssistants() {
         `Ask how you can assist them in the meantime, and gather basic details.`
       );
       setMaxReplies(3);
+      setTakeoverDelayMinutes(5);
     }
   };
 
@@ -120,6 +124,7 @@ export function AiAgentAssistants() {
           system_prompt: systemPrompt.trim(),
           max_replies: maxReplies,
           is_active: isActive,
+          takeover_delay_minutes: takeoverDelayMinutes,
         }),
       });
 
@@ -357,6 +362,33 @@ export function AiAgentAssistants() {
                         max="10"
                         value={maxReplies}
                         onChange={(e) => setMaxReplies(Number(e.target.value))}
+                        className="w-full h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+                      />
+                    </div>
+                  </div>
+
+                  {/* TAKEOVER DELAY SLIDER */}
+                  <div className="space-y-2 pt-2 border-t border-border/10">
+                    <div className="flex justify-between items-center">
+                      <Label htmlFor="takeoverDelay" className="text-sm font-semibold flex items-center gap-1">
+                        <Settings2 className="h-4 w-4 text-muted-foreground" />
+                        Takeover Delay (Minutes)
+                      </Label>
+                      <Badge variant="secondary" className="font-semibold text-xs px-2 py-0.5">
+                        {takeoverDelayMinutes} {takeoverDelayMinutes === 1 ? 'minute' : 'minutes'}
+                      </Badge>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground pb-1">
+                      If a human agent has replied, the AI will wait for this many minutes of inactivity before replying again. For new chats (with no human messages), the AI will reply instantly.
+                    </p>
+                    <div className="flex items-center gap-4">
+                      <input
+                        type="range"
+                        id="takeoverDelay"
+                        min="1"
+                        max="60"
+                        value={takeoverDelayMinutes}
+                        onChange={(e) => setTakeoverDelayMinutes(Number(e.target.value))}
                         className="w-full h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
                       />
                     </div>

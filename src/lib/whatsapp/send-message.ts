@@ -440,7 +440,6 @@ export async function sendMessageToConversation(
       last_message_text: contentText || `[${messageType}]`,
       last_message_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      ai_autoreply_disabled: true, // Disable AI auto-reply when a human agent manually sends a message
     })
     .eq('id', conversationId);
 

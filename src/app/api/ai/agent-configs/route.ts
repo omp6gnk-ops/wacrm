@@ -16,7 +16,7 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from('ai_agent_configs')
-      .select('id, agent_id, system_prompt, max_replies, is_active, created_at, updated_at')
+      .select('id, agent_id, system_prompt, max_replies, is_active, takeover_delay_minutes, created_at, updated_at')
       .eq('account_id', accountId)
 
     if (error) {
@@ -52,6 +52,10 @@ export async function POST(request: Request) {
     if (!Number.isFinite(maxReplies)) maxReplies = 3
     maxReplies = Math.min(10, Math.max(1, Math.floor(maxReplies)))
 
+    let takeoverDelayMinutes = Number(body.takeover_delay_minutes)
+    if (!Number.isFinite(takeoverDelayMinutes)) takeoverDelayMinutes = 5
+    takeoverDelayMinutes = Math.min(60, Math.max(1, Math.floor(takeoverDelayMinutes)))
+
     const isActive = body.is_active !== false
 
     const { data, error } = await supabase
@@ -62,6 +66,7 @@ export async function POST(request: Request) {
         system_prompt: systemPrompt,
         max_replies: maxReplies,
         is_active: isActive,
+        takeover_delay_minutes: takeoverDelayMinutes,
       }, {
         onConflict: 'account_id,agent_id',
       })
