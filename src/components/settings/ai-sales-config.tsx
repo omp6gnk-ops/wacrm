@@ -321,6 +321,19 @@ export function AiSalesConfig() {
     }
   };
 
+  const handleDownloadSampleCsv = () => {
+    const csvContent = "name,price,link\nBMTC 131 HINDI,70,https://drive.google.com/file/d/1cUFdfDfMAJbMYSIQdRsAPhK...\nBECC 132,70,https://drive.google.com/file/d/1cUFdfDfMAJbMYSIQdRsAPhK...\nBHDC131 ENGLISH,70,https://drive.google.com/file/d/1cUFdfDfMAJbMYSIQdRsAPhK...\n";
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", "sample_products_catalog.csv");
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const handleBulkCsvUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -334,14 +347,20 @@ export function AiSalesConfig() {
       if (typeof text !== 'string') return;
 
       try {
-        const lines = text.split(/\r?\n/);
+        // Strip BOM if present
+        const cleanedText = text.replace(/^\uFEFF/, '');
+        
+        const lines = cleanedText.split(/\r?\n/);
         if (lines.length <= 1) {
           toast.error('CSV file is empty');
           return;
         }
 
+        // Detect delimiter (comma or semicolon)
+        const delimiter = lines[0].includes(';') ? ';' : ',';
+
         // Clean headers
-        const headers = lines[0].split(',').map(h => h.trim().replace(/^["']|["']$/g, '').toLowerCase());
+        const headers = lines[0].split(delimiter).map(h => h.trim().replace(/^["']|["']$/g, '').toLowerCase());
         
         const nameIdx = headers.findIndex(h => h.includes('name') || h.includes('title') || h === 'product');
         const priceIdx = headers.findIndex(h => h.includes('price') || h.includes('rate') || h === 'cost' || h === 'amount');
@@ -365,7 +384,7 @@ export function AiSalesConfig() {
             const char = line[charIdx];
             if (char === '"') {
               inQuotes = !inQuotes;
-            } else if (char === ',' && !inQuotes) {
+            } else if (char === delimiter && !inQuotes) {
               values.push(current.trim().replace(/^["']|["']$/g, ''));
               current = '';
             } else {
@@ -1271,7 +1290,16 @@ export function AiSalesConfig() {
               <div className="border border-border/80 rounded-xl p-4 bg-muted/20 grid gap-4">
                 <div className="flex items-center justify-between">
                   <h4 className="text-sm font-bold text-foreground">Add New Product</h4>
-                  <div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 px-3 text-xs"
+                      onClick={handleDownloadSampleCsv}
+                    >
+                      Download Sample CSV
+                    </Button>
                     <label className="h-8 px-3 flex items-center justify-center rounded-md text-xs font-semibold cursor-pointer border shadow-sm bg-background hover:bg-muted text-foreground gap-1.5 transition-colors">
                       <Upload className="h-3.5 w-3.5 text-primary" />
                       Bulk Import CSV
