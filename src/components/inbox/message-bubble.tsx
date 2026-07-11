@@ -216,6 +216,29 @@ function MessageContent({ message }: { message: Message }) {
       );
 
     case "interactive": {
+      if (message.sender_type !== "customer") {
+        return (
+          <div className="flex flex-col gap-2">
+            <p className="whitespace-pre-wrap break-words text-sm">
+              {message.content_text}
+            </p>
+            {message.button_text && message.button_url && (
+              <div className="flex justify-start">
+                <a
+                  href={message.button_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/95"
+                >
+                  <span>{message.button_text}</span>
+                  <span className="text-[9px] bg-primary-foreground/20 px-1 py-0.5 rounded text-primary-foreground">Link</span>
+                </a>
+              </div>
+            )}
+          </div>
+        );
+      }
+
       // Customer tapped a reply button or list row on a message the bot
       // sent. We show the tapped option's title (already in content_text,
       // set by parseMessageContent in the webhook) with a small affordance

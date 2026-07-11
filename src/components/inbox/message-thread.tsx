@@ -642,6 +642,68 @@ export function MessageThread({
     [conversation, onNewMessage, onUpdateMessage],
   );
 
+  const handleSendCtaUrl = useCallback(
+    async (text: string, buttonText: string, buttonUrl: string, replyToId?: string) => {
+      if (!conversation) return;
+
+      const tempId = `temp-${Date.now()}`;
+
+      // Optimistic update — shows the message immediately with "sending" status
+      const optimisticMsg: Message = {
+        id: tempId,
+        conversation_id: conversation.id,
+        sender_type: "agent",
+        content_type: "interactive",
+        content_text: text,
+        button_text: buttonText,
+        button_url: buttonUrl,
+        status: "sending",
+        created_at: new Date().toISOString(),
+        reply_to_message_id: replyToId,
+      };
+      onNewMessage(optimisticMsg);
+      setReplyTo(null);
+
+      try {
+        const res = await fetch("/api/whatsapp/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversation_id: conversation.id,
+            message_type: "interactive",
+            content_text: text,
+            button_text: buttonText,
+            button_url: buttonUrl,
+            reply_to_message_id: replyToId,
+          }),
+        });
+
+        const payload = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          const reason = payload?.error || `HTTP ${res.status}`;
+          console.error("Failed to send button message:", reason);
+          toast.error(`Failed to send button message: ${reason}`);
+          onUpdateMessage(tempId, { status: "failed" });
+          return;
+        }
+
+        if (payload.success && payload.message_id) {
+          onUpdateMessage(tempId, {
+            id: payload.message_id,
+            status: "sent",
+            message_id: payload.whatsapp_message_id,
+          });
+        }
+      } catch (err: any) {
+        console.error("Error sending button message:", err);
+        toast.error(`Network error sending message`);
+        onUpdateMessage(tempId, { status: "failed" });
+      }
+    },
+    [conversation, onNewMessage, onUpdateMessage]
+  );
+
 
 
   const handleCustomStatusChange = useCallback(
@@ -1272,6 +1334,7 @@ export function MessageThread({
         sessionExpired={sessionInfo.expired}
         onSend={handleSend}
         onSendMedia={handleSendMedia}
+        onSendCtaUrl={handleSendCtaUrl}
         onOpenTemplates={handleOpenTemplates}
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}

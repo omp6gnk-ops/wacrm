@@ -30,6 +30,8 @@ interface CannedResponse {
   message_text: string;
   media_url?: string | null;
   media_type?: string | null;
+  button_text?: string | null;
+  button_url?: string | null;
   position: number;
   created_at: string;
 }
@@ -38,6 +40,8 @@ interface FormMessage {
   messageText: string;
   mediaType: 'image' | 'video' | 'document' | 'audio' | 'none';
   mediaUrl: string;
+  buttonText: string;
+  buttonUrl: string;
 }
 
 interface GroupedResponse {
@@ -47,6 +51,8 @@ interface GroupedResponse {
     message_text: string;
     media_url?: string | null;
     media_type?: string | null;
+    button_text?: string | null;
+    button_url?: string | null;
     position: number;
     created_at: string;
   }>;
@@ -63,7 +69,7 @@ export function CannedPanel() {
   // Form states for creating a new canned response
   const [shortcut, setShortcut] = useState('');
   const [messagesList, setMessagesList] = useState<FormMessage[]>([
-    { messageText: '', mediaType: 'none', mediaUrl: '' }
+    { messageText: '', mediaType: 'none', mediaUrl: '', buttonText: '', buttonUrl: '' }
   ]);
 
   // Media attachment upload states
@@ -105,7 +111,7 @@ export function CannedPanel() {
     try {
       const { data, error } = await supabase
         .from('canned_responses')
-        .select('id, shortcut, message_text, media_url, media_type, position, created_at')
+        .select('id, shortcut, message_text, media_url, media_type, button_text, button_url, position, created_at')
         .eq('account_id', accountId)
         .order('shortcut')
         .order('position', { ascending: true })
@@ -138,6 +144,8 @@ export function CannedPanel() {
         message_text: res.message_text,
         media_url: res.media_url,
         media_type: res.media_type,
+        button_text: res.button_text,
+        button_url: res.button_url,
         position: res.position ?? 0,
         created_at: res.created_at,
       });
@@ -172,6 +180,24 @@ export function CannedPanel() {
       return;
     }
 
+    // Validate buttons requirements (text limit, body text, link URL)
+    for (const msg of validMessages) {
+      if (msg.buttonText.trim()) {
+        if (!msg.messageText.trim()) {
+          toast.error('Interactive button requires body message text');
+          return;
+        }
+        if (msg.buttonText.trim().length > 20) {
+          toast.error('CTA button display text cannot exceed 20 characters');
+          return;
+        }
+        if (!msg.buttonUrl.trim()) {
+          toast.error('Interactive button requires a link URL');
+          return;
+        }
+      }
+    }
+
     // Clean up shortcut
     let cleanShortcut = shortcut.trim().replace(/^\//, '').toLowerCase();
     if (!/^[a-z0-9-_]+$/.test(cleanShortcut)) {
@@ -202,6 +228,8 @@ export function CannedPanel() {
             message_text: msg.messageText.trim(),
             media_url: msg.mediaType !== 'none' ? msg.mediaUrl : null,
             media_type: msg.mediaType !== 'none' ? msg.mediaType : null,
+            button_text: msg.buttonText.trim() || null,
+            button_url: msg.buttonUrl.trim() || null,
             position: i,
           });
 
@@ -210,7 +238,7 @@ export function CannedPanel() {
 
       toast.success(`Quick reply /${cleanShortcut} created successfully`);
       setShortcut('');
-      setMessagesList([{ messageText: '', mediaType: 'none', mediaUrl: '' }]);
+      setMessagesList([{ messageText: '', mediaType: 'none', mediaUrl: '', buttonText: '', buttonUrl: '' }]);
       await loadResponses();
     } catch (err: any) {
       console.error('Failed to create canned response:', err);
@@ -336,6 +364,39 @@ export function CannedPanel() {
                         </select>
                       </div>
 
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <div className="space-y-1">
+                          <div className="flex justify-between items-center">
+                            <Label className="text-[10px]">Button Text (Optional)</Label>
+                            <span className="text-[8px] text-muted-foreground">{msg.buttonText.length}/20</span>
+                          </div>
+                          <Input
+                            placeholder="e.g. View Demo"
+                            value={msg.buttonText}
+                            maxLength={20}
+                            onChange={(e) => {
+                              const newList = [...messagesList];
+                              newList[index].buttonText = e.target.value;
+                              setMessagesList(newList);
+                            }}
+                            className="bg-muted/50 border-border text-xs py-1 h-7 text-[11px]"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[10px]">Button URL (Optional)</Label>
+                          <Input
+                            placeholder="e.g. https://drive.google.com/..."
+                            value={msg.buttonUrl}
+                            onChange={(e) => {
+                              const newList = [...messagesList];
+                              newList[index].buttonUrl = e.target.value;
+                              setMessagesList(newList);
+                            }}
+                            className="bg-muted/50 border-border text-xs py-1 h-7 text-[11px]"
+                          />
+                        </div>
+                      </div>
+
                       {msg.mediaType !== 'none' && (
                         <div className="space-y-2 rounded-lg border border-border p-2 bg-muted/10">
                           <div className="flex items-center justify-between text-[10px]">
@@ -406,7 +467,7 @@ export function CannedPanel() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setMessagesList([...messagesList, { messageText: '', mediaType: 'none', mediaUrl: '' }])}
+                  onClick={() => setMessagesList([...messagesList, { messageText: '', mediaType: 'none', mediaUrl: '', buttonText: '', buttonUrl: '' }])}
                   className="w-full text-xs border-dashed border-border"
                 >
                   <Plus className="h-3.5 w-3.5 mr-1" /> Add Message Block
@@ -483,6 +544,19 @@ export function CannedPanel() {
                               <Paperclip className="h-3 w-3" />
                               <a href={msg.media_url} target="_blank" rel="noreferrer" className="underline hover:text-primary truncate">
                                 {msg.media_url.split('/').pop()}
+                              </a>
+                            </div>
+                          )}
+                          {msg.button_text && msg.button_url && (
+                            <div className="mt-2 pt-2 border-t border-border/10 flex justify-start">
+                              <a
+                                href={msg.button_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 rounded bg-primary px-2.5 py-1 text-[10px] font-semibold text-primary-foreground hover:bg-primary/90"
+                              >
+                                <span>{msg.button_text}</span>
+                                <span className="text-[8px] bg-primary-foreground/20 px-1 py-0.5 rounded text-primary-foreground">Link</span>
                               </a>
                             </div>
                           )}

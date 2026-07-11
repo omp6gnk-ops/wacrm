@@ -42,6 +42,7 @@ export const MEDIA_KINDS = ['image', 'video', 'document', 'audio'] as const;
 export const VALID_MESSAGE_TYPES = [
   'text',
   'template',
+  'interactive',
   ...MEDIA_KINDS,
 ] as const;
 
@@ -74,6 +75,8 @@ export interface SendMessageParams {
   /** Structured template params (header/body/buttons). */
   templateMessageParams?: unknown;
   replyToMessageId?: string | null;
+  buttonText?: string | null;
+  buttonUrl?: string | null;
 }
 
 export interface SendMessageResult {
@@ -175,6 +178,8 @@ export async function sendMessageToConversation(
     templateParams,
     templateMessageParams,
     replyToMessageId,
+    buttonText,
+    buttonUrl,
   } = params;
 
   if (!conversationId) {
@@ -316,6 +321,22 @@ export async function sendMessageToConversation(
       });
       return result.messageId;
     }
+    if (messageType === 'interactive') {
+      const { sendCtaUrlMessage } = await import('./meta-api');
+      if (!buttonText || !buttonUrl) {
+        throw new SendMessageError('bad_request', 'Interactive message requires buttonText and buttonUrl', 400);
+      }
+      const result = await sendCtaUrlMessage({
+        phoneNumberId: config.phone_number_id,
+        accessToken,
+        to: phone,
+        bodyText: contentText!,
+        buttonDisplayText: buttonText,
+        buttonUrl: buttonUrl,
+        contextMessageId,
+      });
+      return result.messageId;
+    }
     if (isMediaKind) {
       const result = await sendMediaMessage({
         phoneNumberId: config.phone_number_id,
@@ -395,6 +416,8 @@ export async function sendMessageToConversation(
       content_text: contentText || null,
       media_url: mediaUrl || null,
       template_name: templateName || null,
+      button_text: buttonText || null,
+      button_url: buttonUrl || null,
       message_id: waMessageId,
       status: 'sent',
       reply_to_message_id: replyToMessageId || null,

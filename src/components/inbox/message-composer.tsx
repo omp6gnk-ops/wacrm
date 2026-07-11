@@ -99,6 +99,7 @@ interface MessageComposerProps {
   sessionExpired: boolean;
   onSend: (text: string, replyToId?: string) => Promise<void> | void;
   onSendMedia: (payload: SendMediaPayload) => Promise<void> | void;
+  onSendCtaUrl?: (text: string, buttonText: string, buttonUrl: string, replyToId?: string) => Promise<void> | void;
   onOpenTemplates: () => void;
   replyTo?: ReplyDraft | null;
   onClearReply?: () => void;
@@ -120,6 +121,7 @@ export function MessageComposer({
   sessionExpired,
   onSend,
   onSendMedia,
+  onSendCtaUrl,
   onOpenTemplates,
   replyTo,
   onClearReply,
@@ -130,9 +132,9 @@ export function MessageComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const { accountId } = useAuth();
-  const [cannedReplies, setCannedReplies] = useState<{ id: string; shortcut: string; message_text: string; media_url?: string | null; media_type?: string | null; position?: number; created_at?: string }[]>([]);
+  const [cannedReplies, setCannedReplies] = useState<{ id: string; shortcut: string; message_text: string; media_url?: string | null; media_type?: string | null; button_text?: string | null; button_url?: string | null; position?: number; created_at?: string }[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [suggestions, setSuggestions] = useState<{ id: string; shortcut: string; message_text: string; media_url?: string | null; media_type?: string | null; position?: number; created_at?: string }[]>([]);
+  const [suggestions, setSuggestions] = useState<{ id: string; shortcut: string; message_text: string; media_url?: string | null; media_type?: string | null; button_text?: string | null; button_url?: string | null; position?: number; created_at?: string }[]>([]);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
 
   useEffect(() => {
@@ -141,7 +143,7 @@ export function MessageComposer({
       const supabase = createClient();
       const { data } = await supabase
         .from('canned_responses')
-        .select('id, shortcut, message_text, media_url, media_type, position, created_at')
+        .select('id, shortcut, message_text, media_url, media_type, button_text, button_url, position, created_at')
         .eq('account_id', accountId)
         .order('shortcut')
         .order('position', { ascending: true })
@@ -232,7 +234,7 @@ export function MessageComposer({
     }
   }, [text, sending, sessionExpired, onSend, replyTo?.id]);
 
-  const applyCannedReply = useCallback(async (reply: { shortcut: string; message_text: string; media_url?: string | null; media_type?: string | null }) => {
+  const applyCannedReply = useCallback(async (reply: { shortcut: string; message_text: string; media_url?: string | null; media_type?: string | null; button_text?: string | null; button_url?: string | null }) => {
     if (!textareaRef.current) return;
     const el = textareaRef.current;
     const cursorPosition = el.selectionStart ?? text.length;
@@ -258,7 +260,10 @@ export function MessageComposer({
 
     if (matches.length === 1) {
       const singleReply = matches[0];
-      if (singleReply.media_url && singleReply.media_type) {
+      if (singleReply.button_text && singleReply.button_url && onSendCtaUrl) {
+        // Send button quick reply immediately
+        await onSendCtaUrl(singleReply.message_text, singleReply.button_text, singleReply.button_url, replyTo?.id);
+      } else if (singleReply.media_url && singleReply.media_type) {
         // Stage media attachment as draft in composer, with caption set to reply text
         setDraft({
           kind: singleReply.media_type as any,
@@ -291,7 +296,9 @@ export function MessageComposer({
       });
 
       for (const item of sortedMatches) {
-        if (item.media_url && item.media_type) {
+        if (item.button_text && item.button_url && onSendCtaUrl) {
+          await onSendCtaUrl(item.message_text, item.button_text, item.button_url, replyTo?.id);
+        } else if (item.media_url && item.media_type) {
           await onSendMedia({
             kind: item.media_type as any,
             mediaUrl: item.media_url,
@@ -306,7 +313,7 @@ export function MessageComposer({
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
     }
-  }, [text, adjustHeight, cannedReplies, onSend, onSendMedia]);
+  }, [text, adjustHeight, cannedReplies, onSend, onSendMedia, onSendCtaUrl, replyTo?.id]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {

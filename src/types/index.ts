@@ -221,6 +221,8 @@ export interface Message {
    * cue (renders with a "↩ button reply" affordance).
    */
   interactive_reply_id?: string;
+  button_text?: string;
+  button_url?: string;
 }
 
 export type ReactionActor = 'customer' | 'agent';
