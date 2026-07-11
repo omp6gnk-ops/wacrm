@@ -43,6 +43,43 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => null)
     if (!body || typeof body !== 'object') return bad('Invalid request body')
 
+    if (Array.isArray(body)) {
+      const productsToInsert = []
+      for (const item of body) {
+        if (!item || typeof item !== 'object') continue
+        const name = typeof item.name === 'string' ? item.name.trim() : ''
+        const price = Number(item.price)
+        const fileUrl = typeof item.file_url === 'string' ? item.file_url.trim() : ''
+        
+        if (!name || isNaN(price) || price < 0 || !fileUrl) {
+          return bad(`Invalid product data in bulk list`)
+        }
+        
+        productsToInsert.push({
+          account_id: accountId,
+          name,
+          price,
+          file_url: fileUrl
+        })
+      }
+      
+      if (productsToInsert.length === 0) {
+        return bad('No products to insert')
+      }
+      
+      const { data, error } = await supabase
+        .from('ai_products')
+        .insert(productsToInsert)
+        .select()
+        
+      if (error) {
+        console.error('[ai/products POST bulk] insert error:', error)
+        return NextResponse.json({ error: 'Failed to add products in bulk' }, { status: 500 })
+      }
+      
+      return NextResponse.json({ success: true, products: data })
+    }
+
     const name = typeof body.name === 'string' ? body.name.trim() : ''
     if (!name) return bad('Product name is required')
 

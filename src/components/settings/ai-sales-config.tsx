@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, Sparkles, CheckCircle2, Trash2, Eye, EyeOff, ShieldCheck, PlayCircle, Settings, HelpCircle, UserCheck, Tag, Info, Database, ShoppingBag } from 'lucide-react';
+import { Loader2, Sparkles, CheckCircle2, Trash2, Eye, EyeOff, ShieldCheck, PlayCircle, Settings, HelpCircle, UserCheck, Tag, Info, Database, ShoppingBag, Upload } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { canEditSettings } from '@/lib/auth/roles';
 import { createClient } from '@/lib/supabase/client';
@@ -106,6 +106,8 @@ export function AiSalesConfig() {
   const [newProductPrice, setNewProductPrice] = useState('');
   const [newProductFileUrl, setNewProductFileUrl] = useState('');
   const [uploadingFile, setUploadingFile] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 5;
 
   // Auto-Categorization
   const [autoCategorizeEnabled, setAutoCategorizeEnabled] = useState(false);
@@ -310,6 +312,98 @@ export function AiSalesConfig() {
     } catch {
       toast.error('Failed to delete product');
     }
+  };
+
+  const handleBulkCsvUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Reset file input
+    e.target.value = '';
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const text = event.target?.result;
+      if (typeof text !== 'string') return;
+
+      try {
+        const lines = text.split(/\r?\n/);
+        if (lines.length <= 1) {
+          toast.error('CSV file is empty');
+          return;
+        }
+
+        // Clean headers
+        const headers = lines[0].split(',').map(h => h.trim().replace(/^["']|["']$/g, '').toLowerCase());
+        
+        const nameIdx = headers.findIndex(h => h.includes('name') || h.includes('title') || h === 'product');
+        const priceIdx = headers.findIndex(h => h.includes('price') || h.includes('rate') || h === 'cost' || h === 'amount');
+        const linkIdx = headers.findIndex(h => h.includes('link') || h.includes('url') || h.includes('file'));
+
+        if (nameIdx === -1 || priceIdx === -1 || linkIdx === -1) {
+          toast.error('CSV must contain column headers for "name", "price", and "link" (file URL)');
+          return;
+        }
+
+        const parsedProducts: any[] = [];
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+
+          // Parse line handling quotes
+          const values = [];
+          let current = '';
+          let inQuotes = false;
+          for (let charIdx = 0; charIdx < line.length; charIdx++) {
+            const char = line[charIdx];
+            if (char === '"') {
+              inQuotes = !inQuotes;
+            } else if (char === ',' && !inQuotes) {
+              values.push(current.trim().replace(/^["']|["']$/g, ''));
+              current = '';
+            } else {
+              current += char;
+            }
+          }
+          values.push(current.trim().replace(/^["']|["']$/g, ''));
+
+          if (values.length <= Math.max(nameIdx, priceIdx, linkIdx)) continue;
+
+          const name = values[nameIdx].trim();
+          const priceStr = values[priceIdx].replace(/[^\d.]/g, ''); // Strip currency symbols
+          const price = Number(priceStr);
+          const file_url = values[linkIdx].trim();
+
+          if (name && !isNaN(price) && file_url) {
+            parsedProducts.push({ name, price, file_url });
+          }
+        }
+
+        if (parsedProducts.length === 0) {
+          toast.error('No valid products found in CSV');
+          return;
+        }
+
+        const res = await fetch('/api/ai/products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(parsedProducts)
+        });
+
+        if (res.ok) {
+          toast.success(`Successfully imported ${parsedProducts.length} products!`);
+          setCurrentPage(1);
+          void fetchProducts();
+        } else {
+          const errData = await res.json();
+          toast.error(errData.error || 'Failed to import products');
+        }
+
+      } catch (err: any) {
+        toast.error('Error reading CSV: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -538,6 +632,16 @@ export function AiSalesConfig() {
       </div>
     );
   }
+
+  useEffect(() => {
+    const total = Math.ceil(products.length / itemsPerPage);
+    if (currentPage > total && total > 0) {
+      setCurrentPage(total);
+    }
+  }, [products.length, currentPage]);
+
+  const totalPages = Math.ceil(products.length / itemsPerPage);
+  const paginatedProducts = products.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const disabled = !canEdit || saving || testing || removing;
 
@@ -1165,7 +1269,22 @@ export function AiSalesConfig() {
             <CardContent className="space-y-6">
               {/* Add Product Form */}
               <div className="border border-border/80 rounded-xl p-4 bg-muted/20 grid gap-4">
-                <h4 className="text-sm font-bold text-foreground">Add New Product</h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-bold text-foreground">Add New Product</h4>
+                  <div>
+                    <label className="h-8 px-3 flex items-center justify-center rounded-md text-xs font-semibold cursor-pointer border shadow-sm bg-background hover:bg-muted text-foreground gap-1.5 transition-colors">
+                      <Upload className="h-3.5 w-3.5 text-primary" />
+                      Bulk Import CSV
+                      <input
+                        type="file"
+                        accept=".csv"
+                        className="hidden"
+                        disabled={disabled || uploadingFile}
+                        onChange={handleBulkCsvUpload}
+                      />
+                    </label>
+                  </div>
+                </div>
                 <div className="grid md:grid-cols-2 gap-4">
                   <div className="grid gap-1.5">
                     <Label htmlFor="newProdName">Product Name</Label>
@@ -1255,40 +1374,74 @@ export function AiSalesConfig() {
                     No products added to the catalog yet.
                   </div>
                 ) : (
-                  <div className="border border-border/40 rounded-xl overflow-hidden shadow-sm">
-                    <table className="min-w-full divide-y divide-border/20 text-sm">
-                      <thead className="bg-muted/40">
-                        <tr>
-                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase">Product Name</th>
-                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase w-24">Price</th>
-                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase">File URL</th>
-                          <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase w-16">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border/20 bg-background">
-                        {products.map((p) => (
-                          <tr key={p.id} className="hover:bg-muted/10">
-                            <td className="px-4 py-3 font-medium text-foreground">{p.name}</td>
-                            <td className="px-4 py-3 font-semibold text-primary">₹{p.price}</td>
-                            <td className="px-4 py-3 text-muted-foreground max-w-[200px] truncate text-xs">
-                              <a href={p.file_url} target="_blank" rel="noopener noreferrer" className="hover:underline hover:text-primary">
-                                {p.file_url}
-                              </a>
-                            </td>
-                            <td className="px-4 py-3 text-right">
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-7 w-7 text-destructive hover:bg-destructive/10"
-                                onClick={() => handleDeleteProduct(p.id)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </td>
+                  <div className="space-y-4">
+                    <div className="border border-border/40 rounded-xl overflow-hidden shadow-sm bg-background">
+                      <table className="min-w-full divide-y divide-border/20 text-sm">
+                        <thead className="bg-muted/40">
+                          <tr>
+                            <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase">Product Name</th>
+                            <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase w-24">Price</th>
+                            <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase">File URL</th>
+                            <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase w-16">Action</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-border/20 bg-background">
+                          {paginatedProducts.map((p) => (
+                            <tr key={p.id} className="hover:bg-muted/10">
+                              <td className="px-4 py-3 font-medium text-foreground">{p.name}</td>
+                              <td className="px-4 py-3 font-semibold text-primary">₹{p.price}</td>
+                              <td className="px-4 py-3 text-muted-foreground max-w-[200px] truncate text-xs">
+                                <a href={p.file_url} target="_blank" rel="noopener noreferrer" className="hover:underline hover:text-primary">
+                                  {p.file_url}
+                                </a>
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-7 w-7 text-destructive hover:bg-destructive/10"
+                                  onClick={() => handleDeleteProduct(p.id)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Pagination Controls */}
+                    {totalPages > 1 && (
+                      <div className="flex items-center justify-between pt-2 text-xs">
+                        <div className="text-muted-foreground">
+                          Showing {Math.min((currentPage - 1) * itemsPerPage + 1, products.length)}-{Math.min(currentPage * itemsPerPage, products.length)} of {products.length} products
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 px-2.5"
+                            disabled={currentPage === 1}
+                            onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                          >
+                            Previous
+                          </Button>
+                          <div className="px-2 font-medium text-foreground">
+                            Page {currentPage} of {totalPages}
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 px-2.5"
+                            disabled={currentPage === totalPages}
+                            onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                          >
+                            Next
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
