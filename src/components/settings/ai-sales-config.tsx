@@ -109,6 +109,13 @@ export function AiSalesConfig() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
 
+  useEffect(() => {
+    const total = Math.ceil(products.length / itemsPerPage);
+    if (currentPage > total && total > 0) {
+      setCurrentPage(total);
+    }
+  }, [products.length, currentPage]);
+
   // Auto-Categorization
   const [autoCategorizeEnabled, setAutoCategorizeEnabled] = useState(false);
   const [categorizeAfterReplies, setCategorizeAfterReplies] = useState(3);
@@ -632,13 +639,6 @@ export function AiSalesConfig() {
       </div>
     );
   }
-
-  useEffect(() => {
-    const total = Math.ceil(products.length / itemsPerPage);
-    if (currentPage > total && total > 0) {
-      setCurrentPage(total);
-    }
-  }, [products.length, currentPage]);
 
   const totalPages = Math.ceil(products.length / itemsPerPage);
   const paginatedProducts = products.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
