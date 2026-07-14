@@ -224,7 +224,7 @@ export function MessageComposer({
 
     setSending(true);
     try {
-      onSend(trimmed, replyTo?.id);
+      await onSend(trimmed, replyTo?.id);
       setText("");
       if (textareaRef.current) {
         textareaRef.current.style.height = "auto";

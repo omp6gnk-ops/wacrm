@@ -45,7 +45,7 @@ export async function POST(request: Request) {
     // row means "not yours / not found" either way.
     const { data: conversation, error: convErr } = await supabase
       .from('conversations')
-      .select('id')
+      .select('id, assigned_agent_id, contact_id')
       .eq('id', conversationId)
       .maybeSingle()
     if (convErr) {
@@ -87,23 +87,65 @@ export async function POST(request: Request) {
       )
     }
 
-    // Ground the draft in the account's knowledge base (best-effort —
-    // returns [] when there's no KB or retrieval fails).
-    const knowledge = await retrieveKnowledge(
-      supabase,
-      accountId,
-      config,
-      latestUserMessage(messages),
-    )
+    // Check for Agent-Specific Assistant AI config
+    let isAssistantMode = false
+    let assistantPrompt = ''
 
-    const systemPrompt = buildSystemPrompt({
-      userPrompt: config.systemPrompt,
-      mode: 'draft',
-      knowledge,
-      salesModeEnabled: config.salesModeEnabled,
-      salesSystemPrompt: config.salesSystemPrompt,
-      collectFields: config.collectFields,
-    })
+    if (conversation.assigned_agent_id) {
+      const { data: agentConfig } = await supabase
+        .from('ai_agent_configs')
+        .select('system_prompt, is_active')
+        .eq('account_id', accountId)
+        .eq('agent_id', conversation.assigned_agent_id)
+        .eq('is_active', true)
+        .maybeSingle()
+
+      if (agentConfig) {
+        isAssistantMode = true
+        assistantPrompt = agentConfig.system_prompt
+      }
+    }
+
+    // Fetch contact details to inject name into system prompt context
+    let customerName = null
+    if (conversation.contact_id) {
+      const { data: contactRec } = await supabase
+        .from('contacts')
+        .select('name')
+        .eq('id', conversation.contact_id)
+        .maybeSingle()
+
+      if (contactRec?.name && !contactRec.name.includes('+') && !/^\d+$/.test(contactRec.name.replace(/[\s-()]/g, ''))) {
+        customerName = contactRec.name
+      }
+    }
+
+    const contactNameContext = customerName
+      ? `Customer Name: "${customerName}". IMPORTANT: You already know the customer's name is ${customerName}, so do NOT ask them "Apna naam batayein?" or "Aapka naam kya hai?". Greet them directly using their name (e.g., 'Thank you ${customerName} ji').\n\n`
+      : `Customer Name: Unknown. If you do not know the customer's name, ask them politely during the conversation.\n\n`
+
+    let systemPrompt = ''
+    if (isAssistantMode) {
+      systemPrompt = contactNameContext + assistantPrompt
+    } else {
+      // Ground the draft in the account's knowledge base (best-effort —
+      // returns [] when there's no KB or retrieval fails).
+      const knowledge = await retrieveKnowledge(
+        supabase,
+        accountId,
+        config,
+        latestUserMessage(messages),
+      )
+
+      systemPrompt = contactNameContext + buildSystemPrompt({
+        userPrompt: config.systemPrompt,
+        mode: 'draft',
+        knowledge,
+        salesModeEnabled: config.salesModeEnabled,
+        salesSystemPrompt: config.salesSystemPrompt,
+        collectFields: config.collectFields,
+      })
+    }
 
     const { text } = await generateReply({ config, systemPrompt, messages })
     return NextResponse.json({ draft: text })

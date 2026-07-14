@@ -65,3 +65,26 @@ export interface ActivityItem {
   /** Optional deep-link for the whole row (not all items have a target). */
   href?: string
 }
+
+export interface CampaignAnalytics {
+  totalBroadcasts: number
+  totalRecipients: number
+  totalSent: number
+  totalDelivered: number
+  totalRead: number
+  totalReplied: number
+  totalFailed: number
+  campaigns: Array<{
+    id: string
+    name: string
+    template_name: string
+    total_recipients: number
+    sent_count: number
+    delivered_count: number
+    read_count: number
+    replied_count: number
+    failed_count: number
+    status: string
+    created_at: string
+  }>
+}

@@ -326,28 +326,46 @@ export async function deliverBroadcast(
 
       balance -= cost;
 
-      const variants = phoneVariants(recipient.phone);
       let sentMessageId: string | null = null;
       let lastError: string | null = null;
 
-      for (const variant of variants) {
-        try {
-          const result = await sendTemplateMessage({
-            phoneNumberId: plan.phoneNumberId,
-            accessToken: plan.accessToken,
-            to: variant,
-            templateName: plan.templateName,
-            language: plan.templateLanguage,
-            template: plan.templateRow ?? undefined,
-            params: recipient.params,
-          });
-          sentMessageId = result.messageId;
-          lastError = null;
+      const MAX_RETRIES = 3;
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        if (attempt > 0) {
+          // Linear backoff delay: wait 1s, 2s, 3s
+          await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+        }
+
+        const variants = phoneVariants(recipient.phone);
+        sentMessageId = null;
+        lastError = null;
+
+        for (const variant of variants) {
+          try {
+            const result = await sendTemplateMessage({
+              phoneNumberId: plan.phoneNumberId,
+              accessToken: plan.accessToken,
+              to: variant,
+              templateName: plan.templateName,
+              language: plan.templateLanguage,
+              template: plan.templateRow ?? undefined,
+              params: recipient.params,
+            });
+            sentMessageId = result.messageId;
+            lastError = null;
+            break;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            lastError = message;
+            if (!isRecipientNotAllowedError(message)) break;
+          }
+        }
+
+        if (sentMessageId) {
+          console.log(`[broadcast-core] Message successfully sent to ${recipient.phone} on attempt ${attempt + 1}`);
           break;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Unknown error';
-          lastError = message;
-          if (!isRecipientNotAllowedError(message)) break;
+        } else {
+          console.warn(`[broadcast-core] Attempt ${attempt + 1} failed for ${recipient.phone}: ${lastError || 'Unknown error'}`);
         }
       }
 
@@ -409,12 +427,22 @@ export async function deliverBroadcast(
   }
 
   // Terminal status only — counts are trigger-owned (see the note
-  // above). If nothing sent, the broadcast failed outright; a partial
-  // send is still 'sent' (per-recipient failures show in failed_count).
+  // above). Query the current counts to see if any messages ever went out successfully.
+  const { data: updatedBcast } = await db
+    .from('broadcasts')
+    .select('sent_count, delivered_count, read_count, replied_count')
+    .eq('id', plan.broadcastId)
+    .single();
+
+  const totalSent = (updatedBcast?.sent_count ?? 0) +
+                    (updatedBcast?.delivered_count ?? 0) +
+                    (updatedBcast?.read_count ?? 0) +
+                    (updatedBcast?.replied_count ?? 0);
+
   await db
     .from('broadcasts')
     .update({
-      status: sentCount > 0 ? 'sent' : 'failed',
+      status: totalSent > 0 ? 'sent' : 'failed',
       updated_at: new Date().toISOString(),
     })
     .eq('id', plan.broadcastId);

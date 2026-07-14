@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { toast } from 'sonner';
+import { useAuth } from '@/hooks/use-auth';
 import { 
   Sparkles, 
   Loader2, 
@@ -46,10 +47,12 @@ interface AiAgentConfig {
 }
 
 export function AiAgentAssistants() {
+  const { user, accountRole } = useAuth();
   const [members, setMembers] = useState<AccountMember[]>([]);
   const [configs, setConfigs] = useState<AiAgentConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [hasInitializedAgent, setHasInitializedAgent] = useState(false);
 
   // Form states for the editing assistant config
   const [isActive, setIsActive] = useState(false);
@@ -85,6 +88,30 @@ export function AiAgentAssistants() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Automatically initialize selected agent to the logged-in agent if they are not an admin
+  useEffect(() => {
+    if (!loading && accountRole && accountRole !== 'admin' && user?.id && !hasInitializedAgent) {
+      const existing = configs.find(c => c.agent_id === user.id);
+      setSelectedAgentId(user.id);
+      if (existing) {
+        setIsActive(existing.is_active);
+        setSystemPrompt(existing.system_prompt);
+        setMaxReplies(existing.max_replies);
+        setTakeoverDelayMinutes(existing.takeover_delay_minutes ?? 5);
+      } else {
+        setIsActive(false);
+        setSystemPrompt(
+          `You are a helpful assistant for this customer conversation.\n` +
+          `Greet the customer politely and let them know that I am currently away but will reply shortly.\n` +
+          `Ask how you can assist them in the meantime, and gather basic details.`
+        );
+        setMaxReplies(3);
+        setTakeoverDelayMinutes(5);
+      }
+      setHasInitializedAgent(true);
+    }
+  }, [loading, accountRole, user?.id, configs, hasInitializedAgent]);
 
   const handleEditAgent = (agentId: string) => {
     const existing = configs.find(c => c.agent_id === agentId);
@@ -144,7 +171,10 @@ export function AiAgentAssistants() {
             return [...prev, updatedConfig];
           }
         });
-        setSelectedAgentId(null);
+        
+        if (accountRole === 'admin') {
+          setSelectedAgentId(null);
+        }
       } else {
         toast.error(data.error || 'Failed to save configuration');
       }
@@ -166,7 +196,19 @@ export function AiAgentAssistants() {
         toast.success('Agent Assistant AI disabled and removed.');
         setConfigs(prev => prev.filter(c => c.agent_id !== agentId));
         if (selectedAgentId === agentId) {
-          setSelectedAgentId(null);
+          if (accountRole === 'admin') {
+            setSelectedAgentId(null);
+          } else {
+            // Reset fields for the agent themselves
+            setIsActive(false);
+            setSystemPrompt(
+              `You are a helpful assistant for this customer conversation.\n` +
+              `Greet the customer politely and let them know that I am currently away but will reply shortly.\n` +
+              `Ask how you can assist them in the meantime, and gather basic details.`
+            );
+            setMaxReplies(3);
+            setTakeoverDelayMinutes(5);
+          }
         }
       } else {
         const data = await res.json();
@@ -188,98 +230,101 @@ export function AiAgentAssistants() {
 
   // Filter out viewers, assistants are only for admins/agents who handle chats
   const chatAgents = members.filter(m => m.account_role !== 'viewer');
+  const isAdmin = accountRole === 'admin';
 
   return (
     <div className="grid md:grid-cols-12 gap-5 items-start">
       {/* LEFT PANEL: Team members list */}
-      <Card className="border-border/60 shadow-sm md:col-span-5 h-[calc(100vh-14rem)] overflow-y-auto">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg font-bold flex items-center gap-2">
-            <User className="h-5 w-5 text-primary" />
-            Team Members
-          </CardTitle>
-          <CardDescription>
-            Configure lightweight greeting and FAQ assistants for individual chat agents.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="px-4">
-          {chatAgents.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground text-sm">
-              No agents or admins found in this account.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {chatAgents.map((member) => {
-                const config = configs.find(c => c.agent_id === member.user_id);
-                const isConfigured = !!config;
-                const isConfigActive = config?.is_active === true;
-                const isSelected = selectedAgentId === member.user_id;
+      {isAdmin && (
+        <Card className="border-border/60 shadow-sm md:col-span-5 h-[calc(100vh-14rem)] overflow-y-auto">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg font-bold flex items-center gap-2">
+              <User className="h-5 w-5 text-primary" />
+              Team Members
+            </CardTitle>
+            <CardDescription>
+              Configure lightweight greeting and FAQ assistants for individual chat agents.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="px-4">
+            {chatAgents.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground text-sm">
+                No agents or admins found in this account.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {chatAgents.map((member) => {
+                  const config = configs.find(c => c.agent_id === member.user_id);
+                  const isConfigured = !!config;
+                  const isConfigActive = config?.is_active === true;
+                  const isSelected = selectedAgentId === member.user_id;
 
-                return (
-                  <div
-                    key={member.user_id}
-                    onClick={() => handleEditAgent(member.user_id)}
-                    className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer select-none ${
-                      isSelected 
-                        ? 'border-primary/80 bg-primary/5 ring-1 ring-primary/40' 
-                        : 'border-border/40 hover:bg-muted/40'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <Avatar className="h-9 w-9 border border-border/80 shadow-sm">
-                        <AvatarImage src={member.avatar_url || undefined} />
-                        <AvatarFallback className="bg-primary/5 text-primary font-semibold text-xs">
-                          {member.full_name.substring(0, 2).toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="space-y-0.5">
-                        <div className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-                          {member.full_name}
-                          <Badge variant="outline" className="text-[10px] py-0 px-1 border-muted-foreground/30 capitalize text-muted-foreground">
-                            {member.account_role}
-                          </Badge>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          {isConfigured ? (
-                            isConfigActive ? (
-                              <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 border-0 text-[10px] h-4">
-                                Assistant Active
-                              </Badge>
+                  return (
+                    <div
+                      key={member.user_id}
+                      onClick={() => handleEditAgent(member.user_id)}
+                      className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer select-none ${
+                        isSelected 
+                          ? 'border-primary/80 bg-primary/5 ring-1 ring-primary/40' 
+                          : 'border-border/40 hover:bg-muted/40'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-9 w-9 border border-border/80 shadow-sm">
+                          <AvatarImage src={member.avatar_url || undefined} />
+                          <AvatarFallback className="bg-primary/5 text-primary font-semibold text-xs">
+                            {member.full_name.substring(0, 2).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="space-y-0.5">
+                          <div className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                            {member.full_name}
+                            <Badge variant="outline" className="text-[10px] py-0 px-1 border-muted-foreground/30 capitalize text-muted-foreground">
+                              {member.account_role}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            {isConfigured ? (
+                              isConfigActive ? (
+                                <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 border-0 text-[10px] h-4">
+                                  Assistant Active
+                                </Badge>
+                              ) : (
+                                <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 border-0 text-[10px] h-4">
+                                  Disabled
+                                </Badge>
+                              )
                             ) : (
-                              <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 border-0 text-[10px] h-4">
-                                Disabled
-                              </Badge>
-                            )
-                          ) : (
-                            <span className="text-[11px] text-muted-foreground flex items-center gap-0.5">
-                              <HelpCircle className="h-3 w-3" /> No Assistant
-                            </span>
-                          )}
+                              <span className="text-[11px] text-muted-foreground flex items-center gap-0.5">
+                                <HelpCircle className="h-3 w-3" /> No Assistant
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
+                      
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 hover:bg-muted-foreground/10 text-muted-foreground"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEditAgent(member.user_id);
+                        }}
+                      >
+                        <Settings2 className="h-4 w-4" />
+                      </Button>
                     </div>
-                    
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8 hover:bg-muted-foreground/10 text-muted-foreground"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEditAgent(member.user_id);
-                      }}
-                    >
-                      <Settings2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* RIGHT PANEL: Editing configuration */}
-      <div className="md:col-span-7">
+      <div className={isAdmin ? "md:col-span-7" : "md:col-span-12"}>
         {selectedAgentId ? (
           (() => {
             const member = members.find(m => m.user_id === selectedAgentId)!;
@@ -291,7 +336,7 @@ export function AiAgentAssistants() {
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-lg font-bold flex items-center gap-2">
                       <Sparkles className="h-5 w-5 text-primary" />
-                      Configure Assistant: {member.full_name}
+                      Configure Assistant: {member?.full_name || 'My Assistant'}
                     </CardTitle>
                     {hasExisting && (
                       <Button
@@ -305,7 +350,7 @@ export function AiAgentAssistants() {
                     )}
                   </div>
                   <CardDescription>
-                    Set up lightweight FAQ and greeting behavior when chats are assigned to {member.full_name}.
+                    Set up lightweight FAQ and greeting behavior when chats are assigned to {member?.full_name || 'you'}.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -314,7 +359,7 @@ export function AiAgentAssistants() {
                     <div className="space-y-0.5">
                       <Label className="text-sm font-semibold">Enable Assistant bot</Label>
                       <p className="text-[12px] text-muted-foreground">
-                        Turn on initial automatic greetings and answers for {member.full_name}.
+                        Turn on initial automatic greetings and answers for {member?.full_name || 'your chats'}.
                       </p>
                     </div>
                     <Switch
@@ -352,7 +397,7 @@ export function AiAgentAssistants() {
                       </Badge>
                     </div>
                     <p className="text-[11px] text-muted-foreground pb-1">
-                      Limit replies to prevent endless loops. After this cap, the bot stands down so {member.full_name} can reply manually.
+                      Limit replies to prevent endless loops. After this cap, the bot stands down so {member?.full_name || 'you'} can reply manually.
                     </p>
                     <div className="flex items-center gap-4">
                       <input
@@ -396,13 +441,15 @@ export function AiAgentAssistants() {
 
                   {/* ACTIONS BUTTONS */}
                   <div className="flex justify-end gap-3.5 border-t border-border/20 pt-4 mt-6">
-                    <Button
-                      variant="ghost"
-                      onClick={() => setSelectedAgentId(null)}
-                      className="h-9 px-4 text-muted-foreground hover:bg-muted"
-                    >
-                      <Undo2 className="h-4 w-4 mr-1.5" /> Cancel
-                    </Button>
+                    {isAdmin && (
+                      <Button
+                        variant="ghost"
+                        onClick={() => setSelectedAgentId(null)}
+                        className="h-9 px-4 text-muted-foreground hover:bg-muted"
+                      >
+                        <Undo2 className="h-4 w-4 mr-1.5" /> Cancel
+                      </Button>
+                    )}
                     <Button
                       onClick={handleSaveConfig}
                       disabled={saving}

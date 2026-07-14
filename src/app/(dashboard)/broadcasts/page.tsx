@@ -344,13 +344,13 @@ export default function BroadcastsPage() {
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
                         )}
-                        {(broadcast.status === 'failed' || broadcast.status === 'sending') && (
+                        {(broadcast.status === 'failed' || broadcast.status === 'sending' || (broadcast.status === 'sent' && broadcast.failed_count > 0)) && (
                           <Button
                             variant="ghost"
                             size="icon"
                             className="h-7 w-7 text-muted-foreground hover:text-foreground"
                             onClick={(e) => handleRetry(e, broadcast.id)}
-                            title={broadcast.status === 'sending' ? 'Resume/Retry Sending' : 'Retry Sending'}
+                            title={broadcast.status === 'sending' ? 'Resume/Retry Sending' : broadcast.status === 'sent' ? 'Retry Failed Messages' : 'Retry Sending'}
                           >
                             <RefreshCw className="h-3.5 w-3.5" />
                           </Button>

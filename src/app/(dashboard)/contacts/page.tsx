@@ -75,6 +75,8 @@ export default function ContactsPage() {
   const [totalCount, setTotalCount] = useState(0);
   // Tag filter — contacts shown must have ANY of these tags (OR).
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
 
   // Modals
   const [formOpen, setFormOpen] = useState(false);
@@ -131,6 +133,9 @@ export default function ContactsPage() {
     let contactRows: Contact[];
     let count: number;
 
+    const pStart = startDate ? new Date(startDate + 'T00:00:00').toISOString() : null;
+    const pEnd = endDate ? new Date(endDate + 'T23:59:59.999').toISOString() : null;
+
     if (selectedTagIds.length > 0) {
       // Tag filter active — resolve it server-side (join + distinct +
       // windowed total count + pagination) so a tag covering many
@@ -141,6 +146,8 @@ export default function ContactsPage() {
         p_search: term || null,
         p_limit: PAGE_SIZE,
         p_offset: from,
+        p_start_date: pStart,
+        p_end_date: pEnd,
       });
       if (seq !== fetchSeq.current) return; // superseded by a newer fetch
       if (error) {
@@ -161,6 +168,13 @@ export default function ContactsPage() {
       if (term) {
         const like = `%${term}%`;
         query = query.or(`name.ilike.${like},phone.ilike.${like},email.ilike.${like}`);
+      }
+
+      if (pStart) {
+        query = query.gte('created_at', pStart);
+      }
+      if (pEnd) {
+        query = query.lte('created_at', pEnd);
       }
 
       const { data, count: exactCount, error } = await query;
@@ -205,7 +219,7 @@ export default function ContactsPage() {
 
     setContacts(enriched);
     setLoading(false);
-  }, [supabase, page, search, selectedTagIds, tagsMap]);
+  }, [supabase, page, search, selectedTagIds, tagsMap, startDate, endDate]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
@@ -382,8 +396,8 @@ export default function ContactsPage() {
 
       {/* Search + tag filter */}
       <div className="space-y-2">
-        <div className="flex flex-col sm:flex-row gap-2">
-          <div className="relative w-full max-w-sm">
+        <div className="flex flex-col lg:flex-row gap-2 lg:items-center">
+          <div className="relative w-full max-w-sm shrink-0">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
             <Input
               value={search}
@@ -449,7 +463,7 @@ export default function ContactsPage() {
                         className="size-2.5 shrink-0 rounded-full"
                         style={{ backgroundColor: tag.color }}
                       />
-                      <span className="text-sm text-popover-foreground truncate">
+                      <span className="text-sm font-normal text-popover-foreground">
                         {tag.name}
                       </span>
                     </label>
@@ -458,6 +472,49 @@ export default function ContactsPage() {
               )}
             </PopoverContent>
           </Popover>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground shrink-0">From:</span>
+              <Input
+                type="date"
+                value={startDate}
+                onChange={(e) => {
+                  setStartDate(e.target.value);
+                  setPage(0);
+                }}
+                className="w-36 h-9 bg-card border-border text-foreground text-xs"
+              />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground shrink-0">To:</span>
+              <Input
+                type="date"
+                value={endDate}
+                onChange={(e) => {
+                  setEndDate(e.target.value);
+                  setPage(0);
+                }}
+                className="w-36 h-9 bg-card border-border text-foreground text-xs"
+              />
+            </div>
+            {(startDate || endDate) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setStartDate('');
+                  setEndDate('');
+                  setPage(0);
+                }}
+                className="h-9 px-2 text-muted-foreground hover:text-foreground shrink-0"
+                title="Clear date filters"
+              >
+                <X className="size-4 mr-1" />
+                Clear Date
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Active tag-filter chips */}

@@ -15,6 +15,7 @@ import type {
   PipelineStageSlice,
   ResponseTimeBucket,
   ResponseTimeSummary,
+  CampaignAnalytics,
 } from './types'
 
 // ------------------------------------------------------------
@@ -395,4 +396,45 @@ export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> 
   return items
     .sort((a, b) => (a.at > b.at ? -1 : a.at < b.at ? 1 : 0))
     .slice(0, limit)
+}
+
+// --- 6. Campaign Analytics ---------------------------------------------
+
+export async function loadCampaignAnalytics(db: DB): Promise<CampaignAnalytics> {
+  const { data, error } = await db
+    .from('broadcasts')
+    .select('id, name, template_name, total_recipients, sent_count, delivered_count, read_count, replied_count, failed_count, status, created_at')
+    .order('created_at', { ascending: false })
+
+  if (error) throw error
+
+  const campaigns = (data ?? []) as any[]
+
+  let totalBroadcasts = campaigns.length
+  let totalRecipients = 0
+  let totalSent = 0
+  let totalDelivered = 0
+  let totalRead = 0
+  let totalReplied = 0
+  let totalFailed = 0
+
+  for (const c of campaigns) {
+    totalRecipients += c.total_recipients ?? 0
+    totalSent += c.sent_count ?? 0
+    totalDelivered += c.delivered_count ?? 0
+    totalRead += c.read_count ?? 0
+    totalReplied += c.replied_count ?? 0
+    totalFailed += c.failed_count ?? 0
+  }
+
+  return {
+    totalBroadcasts,
+    totalRecipients,
+    totalSent,
+    totalDelivered,
+    totalRead,
+    totalReplied,
+    totalFailed,
+    campaigns,
+  }
 }

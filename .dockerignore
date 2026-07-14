@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.github
+Dockerfile
+.dockerignore
+update-secrets.sh
+restore.sh
+update_roles.sql
+wacrm_safe_backup.zip
+wacrm_updates.zip
+combined_migrations.sql

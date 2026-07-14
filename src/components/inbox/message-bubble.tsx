@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import type { Message, MessageReaction } from "@/types";
 import {
@@ -13,6 +14,10 @@ import {
   LayoutTemplate,
   ImageOff,
   CornerDownLeft,
+  X,
+  ZoomIn,
+  ZoomOut,
+  Download,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
@@ -59,6 +64,91 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
+  const [scale, setScale] = useState(1);
+  const [mounted, setMounted] = useState(false);
+
+  // Pan states
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setMounted(true);
+    return () => setMounted(false);
+  }, []);
+
+  // Reset position when scale is reset to 1
+  useEffect(() => {
+    if (scale === 1) {
+      setPosition({ x: 0, y: 0 });
+    }
+  }, [scale]);
+
+  // Reset scale and position when modal closes/opens
+  useEffect(() => {
+    setScale(1);
+    setPosition({ x: 0, y: 0 });
+  }, [isOpen]);
+
+  // Add passive: false wheel event listener to container to prevent background scroll
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleWheelEvent = (e: WheelEvent) => {
+      e.preventDefault();
+      const zoomStep = 0.15;
+      setScale((prevScale) => {
+        let newScale = prevScale + (e.deltaY < 0 ? zoomStep : -zoomStep);
+        // Clamp scale between 1x and 8x
+        return Math.min(Math.max(newScale, 1), 8);
+      });
+    };
+
+    container.addEventListener("wheel", handleWheelEvent, { passive: false });
+    return () => {
+      container.removeEventListener("wheel", handleWheelEvent);
+    };
+  }, [isOpen]);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (scale <= 1) return;
+    e.preventDefault();
+    setIsDragging(true);
+    setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging || scale <= 1) return;
+    e.preventDefault();
+    setPosition({
+      x: e.clientX - dragStart.x,
+      y: e.clientY - dragStart.y
+    });
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (scale <= 1) return;
+    setIsDragging(true);
+    const touch = e.touches[0];
+    setDragStart({ x: touch.clientX - position.x, y: touch.clientY - position.y });
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!isDragging || scale <= 1) return;
+    const touch = e.touches[0];
+    setPosition({
+      x: touch.clientX - dragStart.x,
+      y: touch.clientY - dragStart.y
+    });
+  };
 
   const loadImage = useCallback(async () => {
     if (!url) return;
@@ -92,6 +182,30 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadImage]);
 
+  // Handle escape key to close modal
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen]);
+
+  // Lock body scroll when modal is open
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [isOpen]);
+
   if (error) {
     return (
       <div className="flex h-40 w-60 items-center justify-center rounded-lg bg-muted">
@@ -109,12 +223,110 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
   }
 
   return (
-    <img
-      src={src ?? ""}
-      alt={alt}
-      className="max-h-64 max-w-60 rounded-lg object-cover"
-      onError={() => setError(true)}
-    />
+    <>
+      <img
+        src={src ?? ""}
+        alt={alt}
+        className="max-h-64 max-w-60 rounded-lg object-cover cursor-pointer hover:opacity-95 active:scale-98 transition-all duration-200"
+        onClick={() => setIsOpen(true)}
+        onError={() => setError(true)}
+      />
+
+      {isOpen && mounted && createPortal(
+        <div 
+          ref={containerRef}
+          className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-black/90 backdrop-blur-md transition-opacity duration-300 animate-in fade-in"
+          onClick={() => {
+            setIsOpen(false);
+          }}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleMouseUp}
+        >
+          {/* Top Bar Controls */}
+          <div className="absolute top-4 right-4 flex items-center gap-4 z-50">
+            {/* Download Button */}
+            <a
+              href={src ?? ""}
+              download="whatsapp_media.jpg"
+              onClick={(e) => e.stopPropagation()}
+              className="p-3 rounded-full bg-white/10 hover:bg-white/20 text-white/90 hover:text-white transition-all cursor-pointer shadow-lg backdrop-blur-sm"
+              title="Download image"
+            >
+              <Download className="h-5 w-5" />
+            </a>
+
+            {/* Zoom Out Button */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setScale((prev) => Math.max(prev - 0.5, 1));
+              }}
+              disabled={scale <= 1}
+              className="p-3 rounded-full bg-white/10 hover:bg-white/20 text-white/90 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shadow-lg backdrop-blur-sm"
+              title="Zoom out"
+            >
+              <ZoomOut className="h-5 w-5" />
+            </button>
+
+            {/* Zoom In Button */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setScale((prev) => Math.min(prev + 0.5, 8));
+              }}
+              disabled={scale >= 8}
+              className="p-3 rounded-full bg-white/10 hover:bg-white/20 text-white/90 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shadow-lg backdrop-blur-sm"
+              title="Zoom in"
+            >
+              <ZoomIn className="h-5 w-5" />
+            </button>
+
+            {/* Close Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsOpen(false);
+              }}
+              className="p-3 rounded-full bg-white/10 hover:bg-white/20 text-white/90 hover:text-white transition-all cursor-pointer shadow-lg backdrop-blur-sm"
+              title="Close viewer"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          {/* Large Image Container */}
+          <div 
+            className="relative w-full h-full flex items-center justify-center overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={src ?? ""}
+              alt={alt}
+              style={{
+                transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
+                transition: isDragging ? "none" : "transform 0.15s ease-out",
+              }}
+              className={cn(
+                "rounded-lg select-none max-h-[85vh] max-w-[85vw] object-contain origin-center",
+                scale > 1 
+                  ? isDragging 
+                    ? "cursor-grabbing" 
+                    : "cursor-grab" 
+                  : "cursor-default"
+              )}
+              onMouseDown={handleMouseDown}
+              onTouchStart={handleTouchStart}
+            />
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
   );
 }
 

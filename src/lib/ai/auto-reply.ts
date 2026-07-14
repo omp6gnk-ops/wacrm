@@ -271,9 +271,25 @@ export async function dispatchInboundToAiReply(
       }
     }
 
+    // Fetch contact details to inject name into system prompt context
+    let customerName = null
+    const { data: contactRec } = await db
+      .from('contacts')
+      .select('name')
+      .eq('id', contactId)
+      .maybeSingle()
+
+    if (contactRec?.name && !contactRec.name.includes('+') && !/^\d+$/.test(contactRec.name.replace(/[\s-()]/g, ''))) {
+      customerName = contactRec.name
+    }
+
+    const contactNameContext = customerName
+      ? `Customer Name: "${customerName}". IMPORTANT: You already know the customer's name is ${customerName}, so do NOT ask them "Apna naam batayein?" or "Aapka naam kya hai?". Greet them directly using their name (e.g., 'Thank you ${customerName} ji').\n\n`
+      : `Customer Name: Unknown. If you do not know the customer's name, ask them politely during the conversation.\n\n`
+
     let systemPrompt = ''
     if (isAssistantMode) {
-      systemPrompt = assistantPrompt
+      systemPrompt = contactNameContext + assistantPrompt
     } else {
       // Ground the reply in the account's knowledge base (best-effort).
       const knowledge = await retrieveKnowledge(
@@ -298,7 +314,7 @@ export async function dispatchInboundToAiReply(
         }
       }
 
-      systemPrompt = buildSystemPrompt({
+      systemPrompt = contactNameContext + buildSystemPrompt({
         userPrompt: config.systemPrompt,
         mode: 'auto_reply',
         knowledge,

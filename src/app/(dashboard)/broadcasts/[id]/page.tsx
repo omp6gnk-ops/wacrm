@@ -358,7 +358,7 @@ export default function BroadcastDetailPage() {
             </Button>
           )}
 
-          {broadcast.status === 'failed' && (
+          {(broadcast.status === 'failed' || (broadcast.status === 'sent' && broadcast.failed_count > 0)) && (
             <Button
               size="sm"
               disabled={retrying}

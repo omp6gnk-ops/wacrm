@@ -33,17 +33,25 @@ export async function GET() {
 /**
  * POST /api/ai/agent-configs
  *
- * Upsert an agent's assistant configuration (admin+).
+ * Upsert an agent's assistant configuration (agent+).
  */
 export async function POST(request: Request) {
   try {
-    const { supabase, accountId } = await requireRole('admin')
+    const { supabase, accountId, role, userId } = await requireRole('agent')
 
     const body = await request.json().catch(() => null)
     if (!body || typeof body !== 'object') return bad('Invalid request body')
 
     const agentId = body.agent_id
     if (!agentId || typeof agentId !== 'string') return bad('agent_id is required')
+
+    // Regular agents can only edit their own configuration
+    if (role !== 'admin' && agentId !== userId) {
+      return NextResponse.json(
+        { error: 'You are only authorized to configure your own Assistant AI settings.' },
+        { status: 403 }
+      )
+    }
 
     const systemPrompt = typeof body.system_prompt === 'string' ? body.system_prompt.trim() : ''
     if (!systemPrompt) return bad('system_prompt is required')
@@ -87,16 +95,24 @@ export async function POST(request: Request) {
 /**
  * DELETE /api/ai/agent-configs
  *
- * Delete an agent assistant configuration (admin+).
+ * Delete an agent assistant configuration (agent+).
  */
 export async function DELETE(request: Request) {
   try {
-    const { supabase, accountId } = await requireRole('admin')
+    const { supabase, accountId, role, userId } = await requireRole('agent')
 
     const { searchParams } = new URL(request.url)
     const agentId = searchParams.get('agent_id')
 
     if (!agentId) return bad('agent_id parameter is required')
+
+    // Regular agents can only delete their own configuration
+    if (role !== 'admin' && agentId !== userId) {
+      return NextResponse.json(
+        { error: 'You are only authorized to delete your own Assistant AI settings.' },
+        { status: 403 }
+      )
+    }
 
     const { error } = await supabase
       .from('ai_agent_configs')

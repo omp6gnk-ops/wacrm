@@ -194,6 +194,7 @@ export function MessageThread({
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastConvIdRef = useRef<string | null>(null);
   const lastMsgCountRef = useRef(0);
+  const hasScrolledToBottomRef = useRef<string | null>(null);
   const fetchConvIdRef = useRef<string | null>(null);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -474,8 +475,17 @@ export function MessageThread({
       const msgCountIncreased = messages.length > lastMsgCountRef.current;
       lastMsgCountRef.current = messages.length;
 
-      if (isNewConv || (msgCountIncreased && isNearBottom)) {
-        el.scrollTop = el.scrollHeight;
+      const needsInitialScroll = messages.length > 0 && hasScrolledToBottomRef.current !== conversationId;
+
+      if (isNewConv || needsInitialScroll || (msgCountIncreased && isNearBottom)) {
+        // requestAnimationFrame ensures layout finishes drawing and we get the correct scrollHeight
+        requestAnimationFrame(() => {
+          el.scrollTop = el.scrollHeight;
+        });
+
+        if (messages.length > 0) {
+          hasScrolledToBottomRef.current = conversationId ?? null;
+        }
       }
     }
   }, [messages, conversationId]);

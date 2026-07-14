@@ -610,6 +610,24 @@ async function processMessage(
   if (!convResult) return
   const conversation = convResult.conversation
 
+  // Deduplicate: check if this message has already been processed in this conversation
+  const { data: existingMsg, error: lookupErr } = await supabaseAdmin()
+    .from('messages')
+    .select('id')
+    .eq('message_id', message.id)
+    .eq('conversation_id', conversation.id)
+    .limit(1)
+    .maybeSingle()
+
+  if (lookupErr) {
+    console.error('[webhook] Error checking duplicate message:', lookupErr)
+  }
+
+  if (existingMsg) {
+    console.log(`[webhook] Message ${message.id} already processed for conversation ${conversation.id}; skipping.`)
+    return
+  }
+
   // Emit conversation.created as soon as the thread is opened — BEFORE
   // the reaction short-circuit below — so a conversation first opened by
   // a reaction still fires the event, and a subscriber always sees the

@@ -215,7 +215,9 @@ export function ConversationList({
         .or(`name.ilike."%${s}%",phone.ilike."%${s}%"`);
       const contactIds = (matchedContacts ?? []).map((c) => c.id);
       if (contactIds.length > 0) {
-        query = query.or(`last_message_text.ilike."%${s}%",contact_id.in.(${contactIds.join(",")})`);
+        // Cap matching contact IDs to 100 to prevent Request-URI Too Large / Bad Request error for accounts with many contacts
+        const cappedContactIds = contactIds.slice(0, 100);
+        query = query.or(`last_message_text.ilike."%${s}%",contact_id.in.(${cappedContactIds.join(",")})`);
       } else {
         query = query.ilike("last_message_text", `%${s}%`);
       }
